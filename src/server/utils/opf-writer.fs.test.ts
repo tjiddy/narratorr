@@ -888,6 +888,15 @@ describe('writeOpfSidecar — row-owns-folder and serialization (#2297 AC11)', (
     expect(await exists(opfPath)).toBe(true);
   });
 
+  // Reds against bare `resolve` only on POSIX, where a backslash is a name character and the
+  // spelling never folds (posix-resolve-ignores-backslash); on Windows both spellings resolve equal.
+  it('matches a row path whose segments use backslashes (#2469 — canonicalPath, not bare resolve)', async () => {
+    const book = makeBook(folder.split('/').join('\\'));
+
+    expect(await runWrite({ book })).toBe('written');
+    expect(await exists(opfPath)).toBe(true);
+  });
+
   it('import first: a refresh issued mid-import applies only after the lock is released', async () => {
     const curated = generateOpf(makeBook(folder, { publisher: 'Gollancz' }));
     await actualFs.writeFile(opfPath, curated, 'utf-8');

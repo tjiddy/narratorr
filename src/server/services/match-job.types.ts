@@ -26,6 +26,8 @@ export interface MatchResult {
   /** Duplicate state from the resolved match, propagated to import review. */
   isDuplicate?: boolean;
   existingBookId?: number; duplicateReason?: DuplicateReason;
+  /** #2091: the flagged incumbent's own folder; set only alongside a `slug` duplicate. */
+  existingPath?: string;
   /** Display-only recording warning, not a hard duplicate. */
   reviewReason?: string;
   /** Library-hit recording verdict; absent for a genuinely new book. */

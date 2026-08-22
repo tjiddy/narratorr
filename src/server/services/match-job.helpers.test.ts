@@ -1284,6 +1284,28 @@ describe('applyLibraryDuplicate', () => {
     expect(out.recordingVerdict).toBe('same-recording');
   });
 
+  // #2091 AC11: the review list's section names what the folder duplicates, so the incumbent's
+  // own folder has to survive the match result — the client cannot resolve it from the id.
+  it('carries the file-holding incumbent path onto the flagged result (#2091)', async () => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: makeIncumbent(421), hasIncumbent: true });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.existingPath).toBe('/library/Le Guin/Tehanu');
+  });
+
+  it.each([
+    ['a fileless incumbent', { verdict: 'same-recording', book: makeIncumbent(421, null), hasIncumbent: true }],
+    ['a review verdict', { verdict: 'review', book: makeIncumbent(77), hasIncumbent: true }],
+    ['a different recording', { verdict: 'admit', book: null, hasIncumbent: true }],
+  ])('omits existingPath for %s (#2091)', async (_label, resolution) => {
+    const { bookService, log } = setup(resolution);
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out).not.toHaveProperty('existingPath');
+  });
+
   // #2435 AC11: a fileless incumbent is the record this folder should fulfil, so the row must stay
   // importable — but it stays IDENTIFIABLE too, or the confirm pass cannot find the book to attach.
   it('does NOT flag a fileless incumbent, while still naming it (#2435 AC11)', async () => {
@@ -1365,6 +1387,9 @@ describe('applyLibraryDuplicate', () => {
     const out = await applyLibraryDuplicate(input, bookService, log);
 
     expect(out).toEqual(input);
+    // #2091 AC22: fail-open means unflagged, so the row cannot reach the review-list section.
+    expect(out.isDuplicate).toBeUndefined();
+    expect(out).not.toHaveProperty('existingPath');
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/downloads/Tehanu' }),
       'Post-match duplicate check failed — proceeding without flag',

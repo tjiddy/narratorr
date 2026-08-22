@@ -21,6 +21,43 @@ export type LibraryFilterBucket = keyof typeof LIBRARY_FILTER_BUCKETS;
 
 export const LIBRARY_FILTER_BUCKET_KEYS = Object.keys(LIBRARY_FILTER_BUCKETS) as [LibraryFilterBucket, ...LibraryFilterBucket[]];
 
+/**
+ * Exported so the totality guard is provable against a deliberately broken partition instead of
+ * requiring a mutation of the production constant.
+ */
+export function invertLibraryFilterBuckets(
+  buckets: Record<LibraryFilterBucket, readonly BookLifecycle[]>,
+): Record<BookLifecycle, LibraryFilterBucket> {
+  const inverse = {} as Record<BookLifecycle, LibraryFilterBucket>;
+  const duplicates: string[] = [];
+  for (const [bucket, statuses] of Object.entries(buckets) as [LibraryFilterBucket, readonly BookLifecycle[]][]) {
+    for (const status of statuses) {
+      const claimedBy = inverse[status];
+      // First claim wins, so a status in three buckets names the first against each later one.
+      if (claimedBy === undefined) inverse[status] = bucket;
+      else duplicates.push(`${status} in both ${claimedBy} and ${bucket}`);
+    }
+  }
+  // Checked before orphans: a partition broken both ways reports the overlap, which is the defect
+  // that would otherwise survive silently as a double-counted bucket.
+  if (duplicates.length > 0) {
+    throw new Error(`LIBRARY_FILTER_BUCKETS no longer partitions BOOK_STATUSES; duplicated: ${duplicates.join(', ')}`);
+  }
+  const orphans = BOOK_STATUSES.filter((status) => inverse[status] === undefined);
+  if (orphans.length > 0) {
+    throw new Error(`LIBRARY_FILTER_BUCKETS no longer partitions BOOK_STATUSES; unbucketed: ${orphans.join(', ')}`);
+  }
+  return inverse;
+}
+
+// Derived, never a second literal: the partition comment above stays the one source of truth, and a
+// status added without a bucket fails here at import rather than projecting undefined into a payload.
+const STATUS_TO_BUCKET = invertLibraryFilterBuckets(LIBRARY_FILTER_BUCKETS);
+
+export function bucketForStatus(status: BookStatus): LibraryFilterBucket {
+  return STATUS_TO_BUCKET[status];
+}
+
 // The wire accepts bucket keys only; the client omits status for its `all` sentinel.
 export const libraryStatusFilterSchema = z.enum(LIBRARY_FILTER_BUCKET_KEYS);
 

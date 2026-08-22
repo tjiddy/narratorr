@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Stats } from 'node:fs';
-import { join, extname, basename, normalize } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/index.js';
 import { transitionDownloadState } from './download-state.js';
@@ -11,6 +11,7 @@ import { withPathWriteLock } from './path-write-lock.js';
 import { withBookAdmissionLock } from './book-admission-lock.js';
 import { claimLockKey } from './claim-lock.js';
 import { canonicalPath, findOtherPathOwner } from './path-identity.js';
+import { buildTagProjection } from './tag-projection.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
@@ -223,7 +224,9 @@ export interface CleanupOldBookPathArgs {
 // Delete managed old-book files on re-import; awaited but nonfatal, foreign files preserved.
 export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<void> {
   const { bookPath, targetPath, libraryRoot, log, db } = args;
-  if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
+  // `canonicalPath` matches the claim key the sweep locks on below; the null guard stays first
+  // because `canonicalPath('')` resolves to the process cwd.
+  if (!bookPath || canonicalPath(targetPath) === canonicalPath(bookPath)) return;
   // The sweep runs after the import's DB commit, so the book's own row already names the new
   // target; "no OTHER row owns it" is the form with meaning here. No re-acquire arm applies —
   // the path swept is an argument, not a row lookup.
@@ -275,21 +278,7 @@ export interface EmbedTagsArgs {
   embedCover: boolean;
   bookId: number;
   targetPath: string;
-  book: {
-    title: string;
-    authorName: string | null;
-    narrator: string | null | undefined;
-    seriesName: string | null | undefined;
-    seriesPosition: number | null | undefined;
-    asin?: string | null | undefined;
-    subtitle?: string | null | undefined;
-    description?: string | null | undefined;
-    publisher?: string | null | undefined;
-    publishedDate?: string | null | undefined;
-    genres?: string[] | null | undefined;
-    coverUrl: string | null | undefined;
-  };
-  /** The in-section re-read; the sole controlling snapshot this step revalidates. */
+  /** The in-section re-read; the sole controlling snapshot this step revalidates AND tags from. */
   bookService: BookService;
   log: FastifyBaseLogger;
 }
@@ -319,22 +308,24 @@ export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
   await withBookAdmissionLock(bookId, () => tagImportedFolder(args, taggingService, mutagenPython));
 }
 
-// Local on purpose: `opf-writer.ts`'s private `ownsFolder` compares with a bare `resolve`, which on
-// POSIX leaves a backslash-spelled parent segment unresolved. Widening that one is a behavior
-// change to four sidecar writers.
-function ownsImportedFolder(book: { path: string | null } | null, targetPath: string): boolean {
+// Same folder-identity function as `opf-writer.ts`'s `ownsFolder` since #2469; kept local because
+// the two guards narrow different shapes (this one is a type predicate over a nullable-path row).
+function ownsImportedFolder<T extends { path: string | null }>(book: T | null, targetPath: string): book is T & { path: string } {
   return book?.path != null && canonicalPath(book.path) === canonicalPath(targetPath);
 }
 
 /**
  * Runs inside the book's admission section. The guard decides only whether to write: a row that has
- * moved on means `targetPath` AND the `ImportContext` projection were both superseded by a later
- * mutator, so following the row would silently turn a best-effort import step into a retag of a
- * folder nobody asked to tag. Cost is stated and bounded — a book renamed inside the window stays
- * untagged until an operator retag, and the skip is warn-logged.
+ * moved on means `targetPath` was superseded by a later mutator, so following the row would silently
+ * turn a best-effort import step into a retag of a folder nobody asked to tag. Cost is stated and
+ * bounded — a book renamed inside the window stays untagged until an operator retag, and the skip is
+ * warn-logged.
+ *
+ * The tags come from that same row, not from a caller-supplied projection: an edit or Fix Match that
+ * committed while this embed queued would otherwise be overwritten on disk by pre-import metadata.
  */
 async function tagImportedFolder(args: EmbedTagsArgs, taggingService: TaggingService, mutagenPython: string): Promise<void> {
-  const { taggingMode, embedCover, bookId, targetPath, book, bookService, log } = args;
+  const { taggingMode, embedCover, bookId, targetPath, bookService, log } = args;
 
   let row: Awaited<ReturnType<BookService['getById']>>;
   try {
@@ -351,7 +342,9 @@ async function tagImportedFolder(args: EmbedTagsArgs, taggingService: TaggingSer
   }
 
   try {
-    const tagResult = await taggingService.tagBook(bookId, targetPath, book, mutagenPython, taggingMode, embedCover);
+    // Built inside the try, not before it: the import is already committed, so a row shape the
+    // projection cannot read must warn and resolve rather than reject into every caller.
+    const tagResult = await taggingService.tagBook(bookId, targetPath, buildTagProjection(row), mutagenPython, taggingMode, embedCover);
     log.info(
       { bookId, tagged: tagResult.tagged, skipped: tagResult.skipped, failed: tagResult.failed },
       'Tag embedding during import',

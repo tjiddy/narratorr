@@ -446,6 +446,7 @@ describe('useEventSource', () => {
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 42] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book'] });
     });
 
     it('invalidates activity, activityCounts, eventHistory on grab_started', () => {
@@ -482,6 +483,7 @@ describe('useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(7) });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.singularBookRoot() });
     });
 
     it('invalidates activity and activityCounts on review_needed', () => {
@@ -517,6 +519,7 @@ describe('useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(42) });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.singularBookRoot() });
     });
   });
 
@@ -706,6 +709,7 @@ describe('#257 merge observability — useEventSource', () => {
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book'] });
     });
   });
 
@@ -1441,6 +1445,7 @@ describe('#637 import SSE cache/toast behaviors', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.singularBookRoot() });
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed Book'), expect.any(Object));
   });
 
@@ -2214,5 +2219,95 @@ describe('#2129 merge_state — snapshot handling in useEventSource', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('#2541 — the singular book root rides the status-bearing events', () => {
+  const SINGULAR_ROOT = { queryKey: ['book'] };
+
+  // Independent of CACHE_INVALIDATION_MATRIX on purpose: a rule flipped in production must fail
+  // here, not silently redefine the expectation.
+  const STATUS_BEARING: [SSEEventType, Record<string, unknown>][] = [
+    ['book_status_change', { book_id: 42, old_status: 'wanted', new_status: 'downloading' }],
+    ['import_complete', { download_id: 7, book_id: 42, book_title: 'Test', job_id: 1, elapsed_ms: 1000 }],
+    ['import_failed', { job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', error_message: 'fail' }],
+    ['merge_complete', { book_id: 42, book_title: 'Test', success: true, message: 'msg' }],
+    ['merge_failed', { book_id: 42, book_title: 'Test', error: 'err', reason: 'error' }],
+  ];
+
+  const NON_STATUS_BEARING: [SSEEventType, Record<string, unknown>][] = [
+    ['download_progress', { download_id: 7, book_id: 42, percentage: 0.5, speed: 1024, eta: 30 }],
+    ['download_status_change', { download_id: 7, book_id: 42, old_status: 'downloading', new_status: 'completed' }],
+    ['grab_started', { download_id: 7, book_id: 42, book_title: 'Test', release_title: 'Release' }],
+    ['review_needed', { download_id: 7, book_id: 42, book_title: 'Test' }],
+    ['import_progress', { job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5, byte_counter: { current: 1, total: 2 } }],
+    ['import_phase_change', { job_id: 1, book_id: 42, book_title: 'Test', from: 'analyzing', to: 'copying' }],
+    ['merge_state', { active: [], queued: [] }],
+    ['search_started', { book_id: 42, book_title: 'Test', indexers: [] }],
+    ['search_complete', { book_id: 42, total_results: 0, outcome: 'no_results' }],
+  ];
+
+  function dispatch(type: SSEEventType, payload: Record<string, unknown>) {
+    const { wrapper, queryClient } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es!.simulateOpen();
+      es!.simulateEvent(type, payload);
+    });
+    return { invalidateSpy, queryClient };
+  }
+
+  it.each(STATUS_BEARING)('%s invalidates the singular root', (type, payload) => {
+    expect(dispatch(type, payload).invalidateSpy).toHaveBeenCalledWith(SINGULAR_ROOT);
+  });
+
+  it.each(NON_STATUS_BEARING)('%s never touches the singular root', (type, payload) => {
+    expect(dispatch(type, payload).invalidateSpy).not.toHaveBeenCalledWith(SINGULAR_ROOT);
+  });
+
+  it('leaves the settings, auth, eventHistory and metadata namespaces untouched', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const untouched = [
+      queryKeys.settings(),
+      queryKeys.auth.status(),
+      queryKeys.eventHistory.byBookId(7),
+      queryKeys.metadata.book('x'),
+    ];
+    for (const key of untouched) queryClient.setQueryData(key, {});
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    await act(async () => {
+      es!.simulateOpen();
+      es!.simulateEvent('book_status_change', { book_id: 42, old_status: 'wanted', new_status: 'downloading' });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    for (const key of untouched) {
+      expect({ key, invalidated: queryClient.getQueryState(key)?.isInvalidated }).toEqual({ key, invalidated: false });
+    }
+  });
+
+  // The cost bound the blanket invalidation rests on: with nothing observing the series query,
+  // TanStack marks it stale and issues no fetch.
+  it('marks an unobserved series query invalidated without refetching it', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const seriesKey = queryKeys.bookSeries(9);
+    queryClient.setQueryData(seriesKey, { series: null });
+    const fetchSpy = vi.spyOn(queryClient, 'fetchQuery');
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    await act(async () => {
+      es!.simulateOpen();
+      es!.simulateEvent('book_status_change', { book_id: 42, old_status: 'wanted', new_status: 'downloading' });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(queryClient.getQueryState(seriesKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(seriesKey)?.fetchStatus).toBe('idle');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -779,6 +779,9 @@ describe('migrateRejectWordsDefault', () => {
     const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
+    // #2561: marker read, work and marker write share ONE transaction — the pre-transaction
+    // marker read was the non-atomic check-then-act template the add-ledger backfill copied.
+    expect(db.transaction).toHaveBeenCalledTimes(1);
   });
 
   it('skips quality write when stored rejectWords is non-empty (user customized) but still marks flag applied with the correct id', async () => {
@@ -955,6 +958,7 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
     const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
+    expect(db.transaction).toHaveBeenCalledTimes(1); // #2561: wrapper opened (see mock-db-tx-handle-is-the-db)
   });
 
   it('skips quality write when user customized rejectWords (anything other than OLD default), but marks flag applied', async () => {
@@ -1108,6 +1112,7 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
+    expect(db.transaction).toHaveBeenCalledTimes(1); // #2561: wrapper opened (see mock-db-tx-handle-is-the-db)
   });
 
   it('clamps a raw stored value >8 to 8 (rescuing the category), reading the raw blob not parseCategory', async () => {

@@ -80,7 +80,7 @@ export async function probeReachable(
 ): Promise<ProbeOutcome> {
   let dispatcher: ReturnType<typeof createProxyAgent>;
   try {
-    dispatcher = createProxyAgent(options.proxyUrl);
+    dispatcher = createProxyAgent(options.proxyUrl, url);
   } catch (error: unknown) {
     return { state: 'inconclusive', reason: getErrorMessage(error) };
   }
@@ -104,6 +104,10 @@ export async function probeReachable(
     return outcomeForTransportCode(transportCodeOf(mapNetworkError(error)));
   } finally {
     clearTimeout(timeoutId);
+    // `dispatcher` is undefined both when no proxy is configured and — because the factory throws
+    // above this try — on the arm that already returned inconclusive. A rejecting close must not
+    // breach the never-throws contract, so it is swallowed like the timer.
+    await dispatcher?.close().catch(() => { /* best-effort cleanup */ });
   }
 }
 

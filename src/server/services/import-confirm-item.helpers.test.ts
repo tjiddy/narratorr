@@ -40,7 +40,8 @@ describe('classifyConfirmItem — classification', () => {
 
     const out = await classifyConfirmItem(makeItem(), bookService, log);
 
-    expect(out).toEqual({ skip: true, existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
+    // A pathless incumbent holds no file, so there is no other path to name.
+    expect(out).toEqual({ skip: true, reason: 'already-in-library', existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
   });
 
   it('skips a same-recording with a NULL incumbent carrying neither key', async () => {
@@ -48,9 +49,10 @@ describe('classifyConfirmItem — classification', () => {
 
     const out = await classifyConfirmItem(makeItem(), bookService, log);
 
-    expect(out).toEqual({ skip: true });
+    expect(out).toEqual({ skip: true, reason: 'already-in-library' });
     expect(out).not.toHaveProperty('existingBookId');
     expect(out).not.toHaveProperty('existingTitle');
+    expect(out).not.toHaveProperty('existingPath');
   });
 
   it('holds a review verdict as a recording-review-required item', async () => {
@@ -99,7 +101,8 @@ describe('classifyConfirmItem — attach classification', () => {
       expect(out).toEqual({ attach: true, bookId: 421, title: 'Tehanu (1990 recording)', status });
     } else {
       // downloading/importing are owned by a live acquisition; imported is already fulfilled.
-      expect(out).toEqual({ skip: true, existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
+      // The incumbent holds no file, so #2091 has no path to snapshot and the generic reason stands.
+      expect(out).toEqual({ skip: true, reason: 'already-in-library', existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
     }
   });
 
@@ -122,7 +125,10 @@ describe('classifyConfirmItem — attach classification', () => {
 
     const out = await classifyConfirmItem(makeItem(), bookService, log);
 
-    expect(out).toEqual({ skip: true, existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
+    expect(out).toEqual({
+      skip: true, reason: 'duplicate-copy-at-other-path',
+      existingBookId: 421, existingTitle: 'Tehanu (1990 recording)', existingPath: '/library/A/B',
+    });
   });
 
   it('logs the attach at info and emits no debug skip line', async () => {
@@ -157,6 +163,75 @@ describe('classifyConfirmItem — attach classification', () => {
 
     expect(out).toBe('proceed');
     expect(findDuplicate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2091 AC13/14 — a same-recording skip splits on WHERE the incumbent's file is. Path identity
+ * goes through `canonicalPath`, so drifted spellings of one folder must not read as two copies.
+ */
+describe('classifyConfirmItem — copy-at-other-path skip reason (#2091)', () => {
+  const owner = (path: string | null) =>
+    ({ id: 421, title: 'Tehanu (1990 recording)', path, status: 'imported' });
+
+  it('reports a genuinely different incumbent folder as a copy at another path', async () => {
+    const { bookService, log } = setup({
+      verdict: 'same-recording', book: owner('/library/Le Guin/Earthsea/Tehanu'), hasIncumbent: true,
+    });
+
+    const out = await classifyConfirmItem(makeItem({ path: '/library/Le Guin/Tehanu' }), bookService, log);
+
+    expect(out).toEqual({
+      skip: true,
+      reason: 'duplicate-copy-at-other-path',
+      existingBookId: 421,
+      existingTitle: 'Tehanu (1990 recording)',
+      existingPath: '/library/Le Guin/Earthsea/Tehanu',
+    });
+  });
+
+  it('reports an incumbent sitting at the item path as already-in-library, with no path', async () => {
+    const { bookService, log } = setup({
+      verdict: 'same-recording', book: owner('/library/Le Guin/Tehanu'), hasIncumbent: true,
+    });
+
+    const out = await classifyConfirmItem(makeItem({ path: '/library/Le Guin/Tehanu' }), bookService, log);
+
+    expect(out).toEqual({
+      skip: true, reason: 'already-in-library', existingBookId: 421, existingTitle: 'Tehanu (1990 recording)',
+    });
+    expect(out).not.toHaveProperty('existingPath');
+  });
+
+  // Each of these names the SAME folder as the item path; a raw string compare would invent a copy.
+  it.each([
+    ['a trailing slash', '/library/Le Guin/Tehanu/'],
+    ['a redundant dot segment', '/library/Le Guin/./Tehanu'],
+    ['a parent-then-descend detour', '/library/Le Guin/Earthsea/../Tehanu'],
+    ['backslash separators', '\\library\\Le Guin\\Tehanu'],
+    ['a doubled separator', '/library/Le Guin//Tehanu'],
+  ])('normalizes %s to the same folder and stays already-in-library', async (_label, incumbentPath) => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: owner(incumbentPath), hasIncumbent: true });
+
+    const out = await classifyConfirmItem(makeItem({ path: '/library/Le Guin/Tehanu' }), bookService, log);
+
+    expect(out).toMatchObject({ skip: true, reason: 'already-in-library' });
+    expect(out).not.toHaveProperty('existingPath');
+  });
+
+  it.each([
+    ['null', null],
+    ['empty string', ''],
+    ['whitespace only', '   '],
+  ])('never fabricates a path from a %s incumbent path in a non-attachable status', async (_label, path) => {
+    const { bookService, log } = setup({
+      verdict: 'same-recording', book: { ...owner(path), status: 'imported' }, hasIncumbent: true,
+    });
+
+    const out = await classifyConfirmItem(makeItem(), bookService, log);
+
+    expect(out).toMatchObject({ skip: true, reason: 'already-in-library' });
+    expect(out).not.toHaveProperty('existingPath');
   });
 });
 

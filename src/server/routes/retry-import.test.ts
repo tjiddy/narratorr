@@ -44,43 +44,50 @@ describe('POST /api/books/:id/retry-import', () => {
   });
 
   it('returns 404 when service reports book not found', async () => {
-    bookImportService.retryImport.mockResolvedValueOnce({ error: 'Book not found', status: 404 });
+    bookImportService.retryImport.mockResolvedValueOnce({ error: 'Book not found', code: 'book_not_found', status: 404 });
     const app = await createApp(bookImportService, nudge);
 
     const res = await app.inject({ method: 'POST', url: '/api/books/999/retry-import' });
 
     expect(res.statusCode).toBe(404);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found', code: 'book_not_found' });
   });
 
   it('returns 409 when service reports active import (book.status=importing case)', async () => {
-    bookImportService.retryImport.mockResolvedValueOnce({ error: 'Import already in progress', status: 409 });
+    bookImportService.retryImport.mockResolvedValueOnce({ error: 'Import already in progress', code: 'already_importing', status: 409 });
     const app = await createApp(bookImportService, nudge);
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
 
     expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'Import already in progress' });
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Import already in progress', code: 'already_importing' });
   });
 
-  it('returns 409 with active-job-exists body when service reports enqueue conflict (#747)', async () => {
-    bookImportService.retryImport.mockResolvedValueOnce({ error: 'active-job-exists', status: 409 } satisfies RetryImportResult);
+  it('returns 409 with a sentence and the active_job_exists code when service reports enqueue conflict (#747, #2529)', async () => {
+    bookImportService.retryImport.mockResolvedValueOnce({
+      error: 'An import job for this book is already queued or running',
+      code: 'active_job_exists',
+      status: 409,
+    } satisfies RetryImportResult);
     const app = await createApp(bookImportService, nudge);
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
 
     expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'active-job-exists' });
+    expect(JSON.parse(res.payload)).toEqual({
+      error: 'An import job for this book is already queued or running',
+      code: 'active_job_exists',
+    });
   });
 
   it('returns 400 when service reports no failed job', async () => {
-    bookImportService.retryImport.mockResolvedValueOnce({ error: 'No failed import job found for this book', status: 400 });
+    bookImportService.retryImport.mockResolvedValueOnce({ error: 'No failed import job found for this book', code: 'no_failed_job', status: 400 });
     const app = await createApp(bookImportService, nudge);
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
 
     expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'No failed import job found for this book' });
+    expect(JSON.parse(res.payload)).toEqual({ error: 'No failed import job found for this book', code: 'no_failed_job' });
   });
 });
 

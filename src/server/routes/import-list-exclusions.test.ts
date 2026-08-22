@@ -10,8 +10,11 @@ const mockExclusion = {
   authorSlug: 'jane-doe',
   importListId: 5,
   importListName: 'NYT Bestsellers',
+  kind: 'deleted' as const,
   createdAt: new Date(),
 };
+
+const mockAdded = { ...mockExclusion, id: 2, title: 'Already Added', kind: 'added' as const };
 
 describe('import list exclusion routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -84,6 +87,51 @@ describe('import list exclusion routes', () => {
       expect(res.statusCode).toBe(400);
       expect(services.importListExclusion.getAll).not.toHaveBeenCalled();
     });
+
+    it('returns every kind and the unfiltered total when no kind is supplied (#2530)', async () => {
+      vi.mocked(services.importListExclusion.getAll).mockResolvedValue({ data: [mockExclusion, mockAdded], total: 2 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/import-list-exclusions' });
+
+      expect(res.json().data.map((r: { kind: string }) => r.kind)).toEqual(['deleted', 'added']);
+      expect(res.json().total).toBe(2);
+      // Absent, not defaulted: the pre-#2530 contract must not be silently narrowed.
+      expect(services.importListExclusion.getAll).toHaveBeenCalledWith({ limit: 100 });
+    });
+
+    it('passes kind=added down to the service and answers with only that kind (#2530)', async () => {
+      vi.mocked(services.importListExclusion.getAll).mockResolvedValue({ data: [mockAdded], total: 1 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/import-list-exclusions?kind=added' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.map((r: { kind: string }) => r.kind)).toEqual(['added']);
+      expect(res.json().total).toBe(1);
+      expect(services.importListExclusion.getAll).toHaveBeenCalledWith({ limit: 100, kind: 'added' });
+    });
+
+    it('passes kind=deleted down to the service (#2530)', async () => {
+      vi.mocked(services.importListExclusion.getAll).mockResolvedValue({ data: [mockExclusion], total: 1 });
+
+      await app.inject({ method: 'GET', url: '/api/import-list-exclusions?kind=deleted' });
+
+      expect(services.importListExclusion.getAll).toHaveBeenCalledWith({ limit: 100, kind: 'deleted' });
+    });
+
+    it('rejects an unknown kind with 400 before the service is touched (#2530)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/import-list-exclusions?kind=bogus' });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.importListExclusion.getAll).not.toHaveBeenCalled();
+    });
+
+    it('combines kind with limit and offset (#2530)', async () => {
+      vi.mocked(services.importListExclusion.getAll).mockResolvedValue({ data: [], total: 7 });
+
+      await app.inject({ method: 'GET', url: '/api/import-list-exclusions?kind=added&limit=2&offset=4' });
+
+      expect(services.importListExclusion.getAll).toHaveBeenCalledWith({ limit: 2, offset: 4, kind: 'added' });
+    });
   });
 
   describe('DELETE /api/import-list-exclusions/:id', () => {
@@ -95,6 +143,15 @@ describe('import list exclusion routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ success: true });
       expect(services.importListExclusion.delete).toHaveBeenCalledWith(7);
+    });
+
+    it('removes an added row as readily as a deleted one (#2530)', async () => {
+      vi.mocked(services.importListExclusion.delete).mockResolvedValue(true);
+
+      const res = await app.inject({ method: 'DELETE', url: `/api/import-list-exclusions/${mockAdded.id}` });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.importListExclusion.delete).toHaveBeenCalledWith(mockAdded.id);
     });
 
     it('returns 404 naming the entity for an unknown id', async () => {

@@ -2226,7 +2226,6 @@ describe('ImportQueueWorker', () => {
       bookStatusAtGrab: 'wanted',
       bookPath: null,
       authorName: 'Test Author',
-      narratorStr: null,
       book: inject<ImportContext['book']>({
         id: 601, title: 'Test Book', status: 'wanted', path: null,
         narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,

@@ -1,0 +1,1 @@
+ALTER TABLE `import_submission_items` ADD `existing_path` text;

@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { ImportListExclusion } from '@/lib/api';
 import { TrashIcon } from '@/components/icons';
+import { KIND_LABELS } from './importListExclusionKind';
 
 interface ImportListExclusionRowProps {
   entry: ImportListExclusion;
@@ -29,6 +30,9 @@ export const ImportListExclusionRow = memo(function ImportListExclusionRow({
         <div className="min-w-0 flex-1">
           <h3 className="font-medium text-sm truncate">{entry.title}</h3>
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md font-medium">
+              {KIND_LABELS[entry.kind]}
+            </span>
             {entry.authorName && (
               <span className="text-xs text-muted-foreground">{entry.authorName}</span>
             )}

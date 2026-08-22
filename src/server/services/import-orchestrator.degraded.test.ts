@@ -205,7 +205,7 @@ describe('ImportOrchestrator — context-resolution failure (#2307)', () => {
       vi.mocked(importService.getImportContext).mockResolvedValue({
         downloadId: 113, downloadTitle: 'The Stranger [2026]', downloadStatus: 'completed',
         bookId: 42, bookTitle: 'The Stranger', bookStatus: 'downloading', bookStatusAtGrab: 'wanted',
-        bookPath: null, authorName: 'Albert Camus', narratorStr: null,
+        bookPath: null, authorName: 'Albert Camus',
         book: { id: 42, title: 'The Stranger' } as never,
         infoHash: null, guid: null,
       });
@@ -215,7 +215,9 @@ describe('ImportOrchestrator — context-resolution failure (#2307)', () => {
 
       await orchestrator.importDownload(113, undefined, { bookId: 42 });
 
-      expect(getById).not.toHaveBeenCalled();
+      // Exactly the #2511 live-identity read and nothing more: degraded context recovery would
+      // issue its own lookup on top, so a second call is the regression this case guards.
+      expect(getById).toHaveBeenCalledTimes(1);
       expect(log.error).not.toHaveBeenCalled();
     });
 
@@ -224,7 +226,7 @@ describe('ImportOrchestrator — context-resolution failure (#2307)', () => {
       vi.mocked(importService.getImportContext).mockResolvedValue({
         downloadId: 113, downloadTitle: 'The Stranger [2026]', downloadStatus: 'completed',
         bookId: 42, bookTitle: 'The Stranger', bookStatus: 'downloading', bookStatusAtGrab: 'wanted',
-        bookPath: null, authorName: 'Albert Camus', narratorStr: null,
+        bookPath: null, authorName: 'Albert Camus',
         book: { id: 42, title: 'The Stranger' } as never,
         infoHash: 'abc123', guid: null,
       });

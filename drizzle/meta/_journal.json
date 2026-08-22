@@ -15,6 +15,20 @@
       "when": 1786657636759,
       "tag": "0001_stiff_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787310423310,
+      "tag": "0002_orange_menace",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787370741728,
+      "tag": "0003_high_adam_warlock",
+      "breakpoints": true
     }
   ]
 }

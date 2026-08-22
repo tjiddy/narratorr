@@ -55,7 +55,7 @@ describe('import-list exclusions — the delete/re-add loop, end to end (#2305)'
   async function listExclusions() {
     const res = await e2e.app.inject({ method: 'GET', url: '/api/import-list-exclusions' });
     expect(res.statusCode).toBe(200);
-    return res.json() as { data: { id: number; title: string; authorName: string | null; importListName: string | null }[]; total: number };
+    return res.json() as { data: { id: number; title: string; authorName: string | null; importListName: string | null; kind: 'added' | 'deleted' }[]; total: number };
   }
 
   it('deletes, stays deleted across syncs, and comes back once the exclusion is removed', async () => {
@@ -200,6 +200,189 @@ describe('import-list exclusions — the delete/re-add loop, end to end (#2305)'
 
     const { data } = await listExclusions();
     expect(data[0]!.importListName).toBe('NYT Bestsellers');
+  });
+
+  describe('a list-added book whose identity the operator then edits (#2530)', () => {
+    /** The exact mutation that produced the incident: title and author both rewritten. */
+    async function renameTo(id: number, title: string, author: string): Promise<void> {
+      const res = await e2e.app.inject({
+        method: 'PUT',
+        url: `/api/books/${id}`,
+        payload: { title, authors: [{ name: author }] },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    async function syncedBookId(): Promise<number> {
+      await sync();
+      const [created] = await e2e.db.select().from(books);
+      return created!.id;
+    }
+
+    it('does not re-add the book after its title and author are edited', async () => {
+      // The regression gate for the whole issue: this case fails against develop, where the sync
+      // re-derives "have I added this?" from the book's CURRENT identity.
+      const id = await syncedBookId();
+      await renameTo(id, 'General Thinking Concepts', 'Shane Parrish');
+
+      await sync();
+
+      expect(await titlesInLibrary()).toEqual(['General Thinking Concepts']);
+      expect(await e2e.db.select().from(books)).toHaveLength(1);
+    });
+
+    it('re-adds once the operator removes the added entry from the undo page', async () => {
+      const id = await syncedBookId();
+      await renameTo(id, 'General Thinking Concepts', 'Shane Parrish');
+
+      const { data } = await listExclusions();
+      expect(data).toHaveLength(1);
+      const undo = await e2e.app.inject({ method: 'DELETE', url: `/api/import-list-exclusions/${data[0]!.id}` });
+      expect(undo.statusCode).toBe(200);
+
+      await sync();
+
+      expect((await titlesInLibrary()).sort()).toEqual(['General Thinking Concepts', 'The Reckoning']);
+    });
+
+    it('leaves exactly one row, of kind deleted, when an UNRENAMED list-added book is deleted', async () => {
+      const id = await syncedBookId();
+
+      const del = await e2e.app.inject({ method: 'DELETE', url: `/api/books/${id}` });
+      expect(del.statusCode).toBe(200);
+
+      const { data, total } = await listExclusions();
+      expect(total).toBe(1);
+      expect(data[0]!.kind).toBe('deleted');
+
+      await sync();
+      expect(await titlesInLibrary()).toEqual([]);
+    });
+
+    it('keeps both refusals when a RENAMED list-added book is deleted, one per identity', async () => {
+      // The tombstone can only key on the identity the book has when it is deleted, so it cannot
+      // absorb an add-ledger row written under the pre-rename one. Two rows here is correct, not a
+      // hidden block: each card names its own title, and removing either does what its copy says.
+      const id = await syncedBookId();
+      await renameTo(id, 'General Thinking Concepts', 'Shane Parrish');
+
+      const del = await e2e.app.inject({ method: 'DELETE', url: `/api/books/${id}` });
+      expect(del.statusCode).toBe(200);
+
+      const { data } = await listExclusions();
+      expect(data.map((r) => [r.title, r.kind]).sort()).toEqual([
+        ['General Thinking Concepts', 'deleted'],
+        ['The Reckoning', 'added'],
+      ]);
+
+      await sync();
+      expect(await titlesInLibrary()).toEqual([]);
+    });
+
+    it('re-adds the original list item after a fix match moves the book to other metadata', async () => {
+      const id = await syncedBookId();
+      vi.spyOn(e2e.services.metadata, 'lookupForFixMatch').mockResolvedValue({
+        kind: 'ok',
+        book: { asin: 'B0NEWMATCH', title: 'A Completely Different Book', authors: [{ name: 'Someone Else' }] },
+      } as unknown as Awaited<ReturnType<typeof e2e.services.metadata.lookupForFixMatch>>);
+
+      const res = await e2e.app.inject({
+        method: 'POST',
+        url: `/api/books/${id}/fix-match`,
+        payload: { asin: 'B0NEWMATCH' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      await sync();
+
+      expect((await titlesInLibrary()).sort()).toEqual(['A Completely Different Book', 'The Reckoning']);
+    });
+
+    it('leaves a deletion tombstone for the same identity untouched by a fix match', async () => {
+      // Re-matching one book must not silently un-refuse an identity the operator deleted.
+      const id = await syncedBookId();
+      await e2e.app.inject({ method: 'DELETE', url: `/api/books/${id}` });
+      const readded = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Reckoning', authors: [{ name: 'Jane Doe' }] },
+      });
+      expect(readded.statusCode).toBe(201);
+
+      vi.spyOn(e2e.services.metadata, 'lookupForFixMatch').mockResolvedValue({
+        kind: 'ok',
+        book: { asin: 'B0NEWMATCH', title: 'A Completely Different Book', authors: [{ name: 'Someone Else' }] },
+      } as unknown as Awaited<ReturnType<typeof e2e.services.metadata.lookupForFixMatch>>);
+
+      const res = await e2e.app.inject({
+        method: 'POST',
+        url: `/api/books/${readded.json().id as number}/fix-match`,
+        payload: { asin: 'B0NEWMATCH' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const { data } = await listExclusions();
+      expect(data.map((r) => [r.title, r.kind])).toEqual([['The Reckoning', 'deleted']]);
+
+      await sync();
+      expect(await titlesInLibrary()).toEqual(['A Completely Different Book']);
+    });
+
+    it('surfaces the entry under kind=added and re-adds only after it is deleted — the whole loop', async () => {
+      const id = await syncedBookId();
+      await renameTo(id, 'General Thinking Concepts', 'Shane Parrish');
+      await sync();
+      expect(await titlesInLibrary()).toEqual(['General Thinking Concepts']);
+
+      const addedRes = await e2e.app.inject({ method: 'GET', url: '/api/import-list-exclusions?kind=added' });
+      expect(addedRes.statusCode).toBe(200);
+      const added = addedRes.json() as { data: { id: number; title: string; kind: string }[]; total: number };
+      expect(added.total).toBe(1);
+      expect(added.data[0]).toMatchObject({ title: 'The Reckoning', kind: 'added' });
+
+      const deletedRes = await e2e.app.inject({ method: 'GET', url: '/api/import-list-exclusions?kind=deleted' });
+      expect((deletedRes.json() as { total: number }).total).toBe(0);
+
+      await e2e.app.inject({ method: 'DELETE', url: `/api/import-list-exclusions/${added.data[0]!.id}` });
+      await sync();
+
+      expect((await titlesInLibrary()).sort()).toEqual(['General Thinking Concepts', 'The Reckoning']);
+    });
+
+    it('records the SEED identity when the provider is down, and re-adds if a later sync resolves differently', async () => {
+      // The one identity-drift window this design does not close, pinned as known rather than left
+      // to surface as a field report: an outage-era row is keyed on the list item's own title.
+      vi.spyOn(e2e.services.metadata, 'resolveBook').mockRejectedValueOnce(new Error('provider unreachable'));
+      await sync();
+      expect(await titlesInLibrary()).toEqual(['The Reckoning']);
+
+      const { data } = await listExclusions();
+      expect(data[0]).toMatchObject({ title: 'The Reckoning', authorName: 'Jane Doe', kind: 'added' });
+
+      vi.spyOn(e2e.services.metadata, 'resolveBook').mockResolvedValue({
+        title: 'Reckoning Day', authors: [{ name: 'Jane Doe' }], asin: 'B0RESOLVED1',
+      } as unknown as Awaited<ReturnType<typeof e2e.services.metadata.resolveBook>>);
+
+      await sync();
+
+      expect((await titlesInLibrary()).sort()).toEqual(['Reckoning Day', 'The Reckoning']);
+    });
+
+    it('creates one book and one added row when the same item appears twice in a batch', async () => {
+      // The gate is advisory and reads once per item, so the backstop for a within-batch repeat is
+      // the duplicate decision — assert the outcome, not which arm produced it.
+      mockFactories.nyt!.mockReturnValue({
+        fetchItems: vi.fn().mockResolvedValue([ITEM, { ...ITEM }]),
+        test: vi.fn().mockResolvedValue({ success: true }),
+      });
+
+      await sync();
+
+      expect(await e2e.db.select().from(books)).toHaveLength(1);
+      const { data } = await listExclusions();
+      expect(data).toHaveLength(1);
+      expect(data[0]!.kind).toBe('added');
+    });
   });
 
   it('touches no other library row when an exclusion is recorded', async () => {

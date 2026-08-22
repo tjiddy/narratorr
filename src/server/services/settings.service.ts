@@ -225,31 +225,42 @@ export class SettingsService {
   async migrateRejectWordsDefault(): Promise<void> {
     const MIGRATION_ID = 'rejectWords-defaults-v1';
     try {
-      const flagRow = await this.db
-        .select()
-        .from(settingsMigrations)
-        .where(eq(settingsMigrations.id, MIGRATION_ID))
-        .limit(1);
-      if (flagRow.length > 0) return;
+      // Marker read as the transaction's first statement (#2561): a pre-transaction read makes
+      // the check-then-act pair non-atomic — benign here only because these writes are idempotent,
+      // but a fatal template for any future migration that inserts rows.
+      const migrated = await this.db.transaction(async (tx) => {
+        const flagRow = await tx
+          .select()
+          .from(settingsMigrations)
+          .where(eq(settingsMigrations.id, MIGRATION_ID))
+          .limit(1);
+        if (flagRow.length > 0) return false;
 
-      const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
-      if (qualityRow.length > 0) {
-        const stored = { ...(qualityRow[0]!.value as Record<string, unknown>) };
-        if (stored.rejectWords === '') {
-          stored.rejectWords = DEFAULT_REJECT_WORDS;
-          await this.db
-            .insert(settings)
-            .values({ key: 'quality', value: stored })
-            .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
-          this.invalidateCache('quality');
-          this.log.info({ migration: MIGRATION_ID }, 'Migrated legacy empty rejectWords to packaged defaults');
+        let changed = false;
+        const qualityRow = await tx.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
+        if (qualityRow.length > 0) {
+          const stored = { ...(qualityRow[0]!.value as Record<string, unknown>) };
+          if (stored.rejectWords === '') {
+            stored.rejectWords = DEFAULT_REJECT_WORDS;
+            await tx
+              .insert(settings)
+              .values({ key: 'quality', value: stored })
+              .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
+            changed = true;
+          }
         }
-      }
 
-      await this.db
-        .insert(settingsMigrations)
-        .values({ id: MIGRATION_ID })
-        .onConflictDoNothing();
+        await tx
+          .insert(settingsMigrations)
+          .values({ id: MIGRATION_ID })
+          .onConflictDoNothing();
+        return changed;
+      });
+
+      if (migrated) {
+        this.invalidateCache('quality');
+        this.log.info({ migration: MIGRATION_ID }, 'Migrated legacy empty rejectWords to packaged defaults');
+      }
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'rejectWords defaults migration failed — will retry on next boot');
     }
@@ -264,31 +275,39 @@ export class SettingsService {
     const OLD_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
     const NEW_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
     try {
-      const flagRow = await this.db
-        .select()
-        .from(settingsMigrations)
-        .where(eq(settingsMigrations.id, MIGRATION_ID))
-        .limit(1);
-      if (flagRow.length > 0) return;
+      const migrated = await this.db.transaction(async (tx) => {
+        const flagRow = await tx
+          .select()
+          .from(settingsMigrations)
+          .where(eq(settingsMigrations.id, MIGRATION_ID))
+          .limit(1);
+        if (flagRow.length > 0) return false;
 
-      const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
-      if (qualityRow.length > 0) {
-        const stored = { ...(qualityRow[0]!.value as Record<string, unknown>) };
-        if (stored.rejectWords === OLD_DEFAULT) {
-          stored.rejectWords = NEW_DEFAULT;
-          await this.db
-            .insert(settings)
-            .values({ key: 'quality', value: stored })
-            .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
-          this.invalidateCache('quality');
-          this.log.info({ migration: MIGRATION_ID }, 'Appended Abridged to legacy packaged rejectWords default');
+        let changed = false;
+        const qualityRow = await tx.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
+        if (qualityRow.length > 0) {
+          const stored = { ...(qualityRow[0]!.value as Record<string, unknown>) };
+          if (stored.rejectWords === OLD_DEFAULT) {
+            stored.rejectWords = NEW_DEFAULT;
+            await tx
+              .insert(settings)
+              .values({ key: 'quality', value: stored })
+              .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
+            changed = true;
+          }
         }
-      }
 
-      await this.db
-        .insert(settingsMigrations)
-        .values({ id: MIGRATION_ID })
-        .onConflictDoNothing();
+        await tx
+          .insert(settingsMigrations)
+          .values({ id: MIGRATION_ID })
+          .onConflictDoNothing();
+        return changed;
+      });
+
+      if (migrated) {
+        this.invalidateCache('quality');
+        this.log.info({ migration: MIGRATION_ID }, 'Appended Abridged to legacy packaged rejectWords default');
+      }
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'rejectWords abridged migration failed — will retry on next boot');
     }
@@ -301,38 +320,46 @@ export class SettingsService {
   async migrateMaxConcurrentProcessingDefaults(): Promise<void> {
     const MIGRATION_ID = 'maxConcurrentProcessing-defaults-v1';
     try {
-      const flagRow = await this.db
-        .select()
-        .from(settingsMigrations)
-        .where(eq(settingsMigrations.id, MIGRATION_ID))
-        .limit(1);
-      if (flagRow.length > 0) return;
+      const migrated = await this.db.transaction(async (tx) => {
+        const flagRow = await tx
+          .select()
+          .from(settingsMigrations)
+          .where(eq(settingsMigrations.id, MIGRATION_ID))
+          .limit(1);
+        if (flagRow.length > 0) return null;
 
-      const processingRow = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
-      if (processingRow.length > 0) {
-        const stored = { ...(processingRow[0]!.value as Record<string, unknown>) };
-        const value = stored.maxConcurrentProcessing;
-        let rewrite: number | null = null;
-        if (value === 2) {
-          rewrite = 1;
-        } else if (typeof value === 'number' && value > 8) {
-          rewrite = 8;
+        let applied: { from: unknown; to: number } | null = null;
+        const processingRow = await tx.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
+        if (processingRow.length > 0) {
+          const stored = { ...(processingRow[0]!.value as Record<string, unknown>) };
+          const value = stored.maxConcurrentProcessing;
+          let rewrite: number | null = null;
+          if (value === 2) {
+            rewrite = 1;
+          } else if (typeof value === 'number' && value > 8) {
+            rewrite = 8;
+          }
+          if (rewrite !== null) {
+            stored.maxConcurrentProcessing = rewrite;
+            await tx
+              .insert(settings)
+              .values({ key: 'processing', value: stored })
+              .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
+            applied = { from: value, to: rewrite };
+          }
         }
-        if (rewrite !== null) {
-          stored.maxConcurrentProcessing = rewrite;
-          await this.db
-            .insert(settings)
-            .values({ key: 'processing', value: stored })
-            .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
-          this.invalidateCache('processing');
-          this.log.info({ migration: MIGRATION_ID, from: value, to: rewrite }, 'Migrated stored maxConcurrentProcessing');
-        }
+
+        await tx
+          .insert(settingsMigrations)
+          .values({ id: MIGRATION_ID })
+          .onConflictDoNothing();
+        return applied;
+      });
+
+      if (migrated) {
+        this.invalidateCache('processing');
+        this.log.info({ migration: MIGRATION_ID, from: migrated.from, to: migrated.to }, 'Migrated stored maxConcurrentProcessing');
       }
-
-      await this.db
-        .insert(settingsMigrations)
-        .values({ id: MIGRATION_ID })
-        .onConflictDoNothing();
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'maxConcurrentProcessing defaults migration failed — will retry on next boot');
     }

@@ -273,6 +273,30 @@ describe('stagedItemResultDtoSchema (disposition union, F42)', () => {
     expect(stagedItemResultDtoSchema.safeParse({ disposition: 'pending', ...base, reason: 'already-in-library' }).success).toBe(false);
     expect(stagedItemResultDtoSchema.safeParse({ disposition: 'skipped', ...base, reason: 'bogus' }).success).toBe(false);
   });
+
+  describe('existingPath on the skipped arm (#2091)', () => {
+    it('accepts a copy-at-other-path skip carrying the incumbent path', () => {
+      const result = stagedItemResultDtoSchema.safeParse({
+        disposition: 'skipped', ...base, reason: 'duplicate-copy-at-other-path', existingBookId: 7, existingPath: '/lib/Author/Other Title',
+      });
+      expect(result.success).toBe(true);
+      if (result.success && result.data.disposition === 'skipped') {
+        expect(result.data.existingPath).toBe('/lib/Author/Other Title');
+      }
+    });
+
+    it('accepts a skipped row without existingPath', () => {
+      expect(stagedItemResultDtoSchema.safeParse({ disposition: 'skipped', ...base, reason: 'already-in-library' }).success).toBe(true);
+    });
+
+    it('rejects existingPath on every other disposition arm', () => {
+      const p = { existingPath: '/lib/x' };
+      expect(stagedItemResultDtoSchema.safeParse({ disposition: 'pending', ...base, ...p }).success).toBe(false);
+      expect(stagedItemResultDtoSchema.safeParse({ disposition: 'accepted', ...base, bookId: 1, ...p }).success).toBe(false);
+      expect(stagedItemResultDtoSchema.safeParse({ disposition: 'held', ...base, reason: 'recording-review-required', ...p }).success).toBe(false);
+      expect(stagedItemResultDtoSchema.safeParse({ disposition: 'failed', ...base, message: 'boom', ...p }).success).toBe(false);
+    });
+  });
 });
 
 describe('submissionResponseSchema arms (F64)', () => {

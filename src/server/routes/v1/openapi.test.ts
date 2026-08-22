@@ -196,6 +196,18 @@ describe('v1 OpenAPI spec generation', () => {
   it('documents the action endpoints with their declared response codes', () => {
     const grab = spec.paths['/api/v1/books/{publicId}/grab'].post.responses;
     expect(Object.keys(grab)).toEqual(expect.arrayContaining(['200', '201', '400', '404', '409']));
+
+    // #2527 added the single-flight 409 and the deadline 504 to discovery.
+    const search = spec.paths['/api/v1/books/{publicId}/search'].post.responses;
+    expect(Object.keys(search)).toEqual(expect.arrayContaining(['200', '400', '404', '409', '504']));
+  });
+
+  it('documents the search 409 with a description naming SEARCH_IN_PROGRESS and what holds the slot (#2527)', () => {
+    const search = spec.paths['/api/v1/books/{publicId}/search'].post.responses;
+    const description: string = search['409'].description;
+    expect(description).toBeTruthy();
+    expect(description).toContain('SEARCH_IN_PROGRESS');
+    expect(description).toMatch(/scheduled|import.list|retry/i);
   });
 
   it('documents the grab 409 with a description enumerating both conflict codes and their meaning (#1861)', () => {

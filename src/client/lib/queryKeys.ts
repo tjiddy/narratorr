@@ -21,6 +21,8 @@ export const queryKeys = {
     ['books', id, 'companion-epub', 'metadata', filename] as const,
   // The singular namespace is intentionally separate from plural list keys.
   bookSeries: (id: number) => ['book', id, 'series'] as const,
+  /** The whole singular namespace; see the status-event enrollment in useEventSource (#2541). */
+  singularBookRoot: () => ['book'] as const,
   // Extends `bookSeries(id)` so base-key invalidation refreshes active searches.
   bookSeriesSearch: (id: number, query: string) => ['book', id, 'series', 'search', query] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,

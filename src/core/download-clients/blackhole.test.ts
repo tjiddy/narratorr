@@ -11,7 +11,7 @@ vi.mock('node:fs/promises', () => ({
   rename: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockResolvedValue(undefined),
-  constants: { R_OK: 4, W_OK: 2 },
+  constants: { R_OK: 4, W_OK: 2, X_OK: 1 },
 }));
 
 vi.mock('node:dns/promises', () => ({
@@ -575,6 +575,8 @@ describe('BlackholeClient', () => {
       const result = await client.test();
       expect(result.success).toBe(true);
       expect(result.message).toContain('watch');
+      // R_OK | W_OK | X_OK — the search bit included, or a non-traversable dir probes green (#2503).
+      expect(vi.mocked(access)).toHaveBeenCalledWith('/downloads/watch', 4 | 2 | 1);
     });
 
     it('fails when watchDir does not exist', async () => {

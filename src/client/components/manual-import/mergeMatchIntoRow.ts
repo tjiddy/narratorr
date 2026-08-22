@@ -24,6 +24,7 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
         isDuplicate: true,
         ...(match.existingBookId !== undefined && { existingBookId: match.existingBookId }),
         ...(match.duplicateReason !== undefined && { duplicateReason: match.duplicateReason }),
+        ...(match.existingPath !== undefined && { existingPath: match.existingPath }),
       }
     : match.reviewReason !== undefined
       ? { ...row.book, reviewReason: match.reviewReason }

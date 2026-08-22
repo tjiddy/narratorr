@@ -41,6 +41,7 @@ export function reportItemProjection() {
     reason: importSubmissionItems.reason,
     existingBookId: importSubmissionItems.existingBookId,
     existingTitle: importSubmissionItems.existingTitle,
+    existingPath: importSubmissionItems.existingPath,
     bookId: importSubmissionItems.bookId,
   } as const;
 }

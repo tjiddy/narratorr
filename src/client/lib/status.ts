@@ -1,4 +1,4 @@
-import type { BookStatus } from '@shared/schemas/book.js';
+import type { BookStatus, LibraryFilterBucket } from '@shared/schemas/book.js';
 
 export interface BookStatusStyle {
   label: string;
@@ -68,3 +68,21 @@ export const bookStatusChipStyles: Record<BookStatus, BookStatusChipStyle> = {
   failed: { text: 'text-destructive', bg: 'bg-destructive/10' },
 };
 
+
+export interface SeriesMemberBucketStyle {
+  label: string;
+  textClass: string;
+}
+
+/**
+ * Series member badges key on the bucket, not the status, so the label holds steady across the
+ * searching→downloading and importing→imported transitions. `imported` reproduces the pre-#2541
+ * static badge exactly; the rest borrow this file's per-status tones.
+ */
+export const seriesMemberBucketStyles: Record<LibraryFilterBucket, SeriesMemberBucketStyle> = {
+  wanted: { label: 'Wanted', textClass: 'text-stone-500 dark:text-stone-400' },
+  downloading: { label: 'Downloading', textClass: 'text-violet-600 dark:text-violet-400' },
+  imported: { label: 'In Library', textClass: 'text-emerald-500' },
+  failed: { label: 'Failed', textClass: 'text-rose-600 dark:text-rose-400' },
+  missing: { label: 'Missing', textClass: 'text-rose-600 dark:text-rose-400' },
+};

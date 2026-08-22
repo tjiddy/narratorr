@@ -725,11 +725,11 @@ describe('useLibraryImport hook (#133)', () => {
     expect(mockStartMatchJob).not.toHaveBeenCalled();
   });
 
-  it('returns emptyResult=true when scan returns only duplicate discoveries (all caught up)', async () => {
+  it('returns emptyResult=true when every discovery is the library book\'s own path (all caught up)', async () => {
     mockScanDirectory.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 2, totalSize: 80000, isDuplicate: true, duplicateReason: 'path' },
-        { path: '/audiobooks/AuthorC/Book3', parsedTitle: 'Book Three', parsedAuthor: 'Author C', parsedSeries: null, fileCount: 1, totalSize: 60000, isDuplicate: true, duplicateReason: 'slug' },
+        { path: '/audiobooks/AuthorD/Book4', parsedTitle: 'Book Four', parsedAuthor: 'Author D', parsedSeries: null, fileCount: 1, totalSize: 60000, isDuplicate: true, duplicateReason: 'path' },
       ],
       totalFolders: 2,
     });
@@ -740,6 +740,26 @@ describe('useLibraryImport hook (#133)', () => {
       expect(result.current.state.emptyResult).toBe(true);
     });
     expect(result.current.state.scanError).toBeNull();
+    expect(mockStartMatchJob).not.toHaveBeenCalled();
+  });
+
+  // #2091 AC7: an all-duplicate scan is only "caught up" if nothing in it is operator-actionable.
+  // A copy at another path is exactly the thing the operator would otherwise never learn about.
+  it('returns emptyResult=false when an all-duplicate scan contains a copy at another path', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 2, totalSize: 80000, isDuplicate: true, duplicateReason: 'path' },
+        { path: '/audiobooks/AuthorC/Book3', parsedTitle: 'Book Three', parsedAuthor: 'Author C', parsedSeries: null, fileCount: 1, totalSize: 60000, isDuplicate: true, duplicateReason: 'slug', existingBookId: 9, existingPath: '/audiobooks/AuthorC/Elsewhere' },
+      ],
+      totalFolders: 2,
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => { expect(result.current.state.step).toBe('review'); });
+    expect(result.current.state.emptyResult).toBe(false);
+    expect(result.current.state.rows).toHaveLength(2);
+    // Both classes remain ineligible, so there is still nothing to match.
     expect(mockStartMatchJob).not.toHaveBeenCalled();
   });
 
@@ -1335,6 +1355,136 @@ describe('retry mechanics (#185)', () => {
   });
 });
 
+/**
+ * #2091 AC5/AC6 — the counts split is presentational. `duplicateCount` still feeds the summary
+ * bar's "already in library" total; the two new counts partition it for the toggle and the section.
+ */
+describe('duplicate count split (#2091)', () => {
+  const mixedDuplicates: ScanResult = {
+    discoveries: [
+      { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100, isDuplicate: false },
+      { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 2, totalSize: 80, isDuplicate: true, duplicateReason: 'path' },
+      { path: '/audiobooks/AuthorC/Book3', parsedTitle: 'Book Three', parsedAuthor: 'Author C', parsedSeries: null, fileCount: 1, totalSize: 60, isDuplicate: true, duplicateReason: 'slug', existingBookId: 9, existingPath: '/audiobooks/AuthorC/Elsewhere' },
+      { path: '/audiobooks/AuthorD/Book4', parsedTitle: 'Book Four', parsedAuthor: 'Author D', parsedSeries: null, fileCount: 1, totalSize: 60, isDuplicate: true, duplicateReason: 'slug', existingBookId: 10 },
+    ],
+    totalFolders: 4,
+  };
+
+  // Self-contained setup: this describe is outside the #133 block whose beforeEach seeds these.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSettings.mockResolvedValue(mockSettings);
+    mockGetBookIdentifiers.mockResolvedValue([]);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+    mockCancelMatchJob.mockResolvedValue({ cancelled: true });
+    localStorage.clear();
+    __resetOutboxCache();
+    wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
+  });
+
+  async function renderMixed() {
+    mockScanDirectory.mockResolvedValue(mixedDuplicates);
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => { expect(result.current.state.step).toBe('review'); });
+    return result;
+  }
+
+  it('partitions the duplicates without double-counting any row', async () => {
+    const result = await renderMixed();
+
+    const { duplicateCount, pathDuplicateCount, copyDuplicateCount } = result.current.counts;
+    expect(pathDuplicateCount).toBe(1);
+    expect(copyDuplicateCount).toBe(2);
+    // The summary-bar total is unchanged and is exactly the two parts.
+    expect(duplicateCount).toBe(3);
+    expect(pathDuplicateCount + copyDuplicateCount).toBe(duplicateCount);
+  });
+
+  it('leaves the "N of M new" denominator and select-all scope on the eligible rows only', async () => {
+    const result = await renderMixed();
+
+    expect(result.current.state.rows.filter(r => r.selected)).toHaveLength(1);
+    act(() => { result.current.actions.handleSelectAll(); });
+    // Deselecting all leaves both duplicate classes exactly as they were: never selected.
+    expect(result.current.state.rows.filter(r => r.selected)).toHaveLength(0);
+    act(() => { result.current.actions.handleSelectAll(); });
+    expect(result.current.state.rows.filter(r => r.selected).map(r => r.book.path)).toEqual(['/audiobooks/AuthorA/Book1']);
+  });
+
+  /**
+   * #2091 AC23 — the deliberate operator override for a wrong same-recording verdict. Opening a
+   * section row and picking metadata auto-selects it and force-imports past the confirm ladder.
+   * This is why the section copy must not promise a recording check at import.
+   */
+  it('preserves the edit-modal escape hatch on a section row', async () => {
+    // The identity still collides, so the recheck cannot clear the flag — this is the case where
+    // the operator is overriding a same-recording verdict they believe is wrong.
+    mockGetBookIdentifiers.mockResolvedValue([
+      { id: 9, asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
+    ]);
+    const result = await renderMixed();
+    await waitFor(() => { expect(mockGetBookIdentifiers).toHaveBeenCalled(); });
+    const idx = result.current.state.rows.findIndex(r => r.book.path === '/audiobooks/AuthorC/Book3');
+    expect(result.current.state.rows[idx]!.selected).toBe(false);
+    wireStagedComplete(stagedMocks, {
+      source: 'library',
+      items: [acceptedRow(0, '/audiobooks/AuthorC/Book3', 'Book Three')],
+    });
+
+    act(() => {
+      result.current.actions.handleEdit(idx, {
+        title: 'Book Three', author: 'Author C', series: '',
+        metadata: { title: 'Book Three', authors: [{ name: 'Author C' }] },
+      });
+    });
+
+    // Picking metadata auto-checks the row even though it is still flagged a duplicate.
+    expect(result.current.state.rows[idx]!.selected).toBe(true);
+
+    act(() => { result.current.actions.handleRegister(); });
+    await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
+
+    const items = submittedItems() as Array<{ path: string; forceImport?: boolean }>;
+    expect(items.find(i => i.path === '/audiobooks/AuthorC/Book3')?.forceImport).toBe(true);
+    // The override is scoped to the edited row; the ordinary new row still goes through the ladder.
+    expect(items.find(i => i.path === '/audiobooks/AuthorA/Book1')?.forceImport).toBeUndefined();
+    // The untouched second copy stays unselected and is never submitted.
+    expect(items.map(i => i.path)).not.toContain('/audiobooks/AuthorD/Book4');
+  });
+
+  it('excludes both duplicate classes from the initial match candidates', async () => {
+    await renderMixed();
+
+    expect(mockStartMatchJob).toHaveBeenCalledWith([
+      expect.objectContaining({ path: '/audiobooks/AuthorA/Book1' }),
+    ]);
+  });
+
+  it('excludes both duplicate classes from the restart candidates', async () => {
+    const result = await renderMixed();
+    mockStartMatchJob.mockClear();
+
+    act(() => { result.current.actions.handleRestartMatch(); });
+
+    await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
+    expect(mockStartMatchJob.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({ path: '/audiobooks/AuthorA/Book1' }),
+    ]);
+  });
+
+  it('leaves both duplicate classes untouched when deselecting pending rows', async () => {
+    const result = await renderMixed();
+
+    act(() => { result.current.actions.handleDeselectPending(); });
+
+    expect(result.current.state.rows.filter(r => r.selected)).toHaveLength(0);
+    for (const path of ['/audiobooks/AuthorB/Book2', '/audiobooks/AuthorC/Book3']) {
+      expect(result.current.state.rows.find(r => r.book.path === path)?.selected).toBe(false);
+    }
+  });
+});
+
 describe('empty result edge case', () => {
   it('scanError is null (not set) when emptyResult is triggered', async () => {
     mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
@@ -1648,11 +1798,13 @@ describe('empty result edge case', () => {
       expect(withinScanRow?.forceImport).toBeUndefined();
     });
 
-    it('scan with only DB duplicates still shows All caught up', async () => {
+    // Scoped to path duplicates since #2091: a slug duplicate is a copy at another path, which
+    // keeps the review list on screen. The all-duplicate-with-a-copy case is pinned separately.
+    it('scan with only own-path DB duplicates still shows All caught up', async () => {
       const allDbDups: ScanResult = {
         discoveries: [
           { path: '/audiobooks/A', parsedTitle: 'A', parsedAuthor: 'X', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'path' },
-          { path: '/audiobooks/B', parsedTitle: 'B', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'slug' },
+          { path: '/audiobooks/B', parsedTitle: 'B', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'path' },
         ],
         totalFolders: 2,
       };

@@ -90,3 +90,52 @@ describe('queryKeys.bookSeries (#1561)', () => {
     expect(qc.getQueryState(key8)?.isInvalidated).toBe(false);
   });
 });
+
+describe('queryKeys.singularBookRoot (#2541)', () => {
+  it('is the bare singular root', () => {
+    expect(queryKeys.singularBookRoot()).toEqual(['book']);
+  });
+
+  it('marks the series card and its in-flight member search invalidated', async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(queryKeys.bookSeries(7), { series: null });
+    qc.setQueryData(queryKeys.bookSeriesSearch(7, 'foo'), { candidates: [] });
+
+    await qc.invalidateQueries({ queryKey: queryKeys.singularBookRoot() });
+
+    expect(qc.getQueryState(queryKeys.bookSeries(7))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(queryKeys.bookSeriesSearch(7, 'foo'))?.isInvalidated).toBe(true);
+  });
+
+  it('leaves every plural-book and non-book namespace alone', async () => {
+    const qc = new QueryClient();
+    const untouched = [
+      queryKeys.books(),
+      queryKeys.libraryBooks(),
+      queryKeys.book(7),
+      queryKeys.bookIdentifiers(),
+      queryKeys.activity(),
+      queryKeys.eventHistory.byBookId(7),
+      queryKeys.metadata.book('x'),
+    ];
+    for (const key of untouched) qc.setQueryData(key, {});
+
+    await qc.invalidateQueries({ queryKey: queryKeys.singularBookRoot() });
+
+    for (const key of untouched) {
+      expect({ key, invalidated: qc.getQueryState(key)?.isInvalidated }).toEqual({ key, invalidated: false });
+    }
+  });
+
+  // Accepted coupling (#2541 AC24): the ad-hoc retry-import key hangs off the same root, so it
+  // refetches on every status event. Retry availability genuinely tracks status, so it stays.
+  it('also marks the undeclared retry-import-available key invalidated', async () => {
+    const qc = new QueryClient();
+    const retryKey = ['book', 7, 'retry-import-available'];
+    qc.setQueryData(retryKey, { available: false });
+
+    await qc.invalidateQueries({ queryKey: queryKeys.singularBookRoot() });
+
+    expect(qc.getQueryState(retryKey)?.isInvalidated).toBe(true);
+  });
+});

@@ -50,6 +50,8 @@ function dbWithUpdateChain(
     subtitle?: string | null;
     publisher?: string | null;
     genres?: string[] | null;
+    title?: string;
+    seriesName?: string | null;
   },
   narratorRows: { narratorId: number }[] = [],
 ) {
@@ -61,6 +63,8 @@ function dbWithUpdateChain(
     subtitle: row?.subtitle ?? null,
     publisher: row?.publisher ?? null,
     genres: row?.genres ?? null,
+    title: row?.title ?? 'Untitled',
+    seriesName: row?.seriesName ?? null,
   };
   const makeHandle = (): MockHandle => ({
     update: vi.fn().mockReturnValue(updateChain),
@@ -103,7 +107,7 @@ describe('orchestrateBookEnrichment', () => {
       await orchestrateBookEnrichment(
         42,
         '/audiobooks/MyBook',
-        { narrators: [{ name: 'Jim Dale' }], duration: 3600, coverUrl: 'http://cover.jpg', existingGenres: ['Fantasy'] },
+        { narrators: [{ name: 'Jim Dale' }], duration: 3600, coverUrl: 'http://cover.jpg' },
         deps,
         { primaryAsin: 'B001', alternateAsins: [], existingNarrator: 'Jim Dale' },
       );
@@ -124,7 +128,7 @@ describe('orchestrateBookEnrichment', () => {
     it('resolves ffprobe path from the auto-detected ffmpeg before calling enrichBookFromAudioWithinAdmissionLock', async () => {
       mockResolveFfprobePath.mockReturnValue('/custom/ffprobe');
 
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect(mockResolveFfprobePath).toHaveBeenCalledWith('/usr/bin/ffmpeg');
       expect(mockEnrichBookFromAudio).toHaveBeenCalledWith(
@@ -134,7 +138,7 @@ describe('orchestrateBookEnrichment', () => {
 
     it('forwards the attach option through to the audio enrichment (#2435)', async () => {
       await orchestrateBookEnrichment(
-        42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null },
+        42, '/path', { narrators: null, duration: null, coverUrl: null },
         deps, { primaryAsin: null }, { attach: true },
       );
 
@@ -146,7 +150,7 @@ describe('orchestrateBookEnrichment', () => {
     it('returns audioEnriched: true when enrichBookFromAudioWithinAdmissionLock reports enrichment', async () => {
       mockEnrichBookFromAudio.mockResolvedValue({ enriched: true });
 
-      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect(result).toEqual({ audioEnriched: true });
     });
@@ -154,7 +158,7 @@ describe('orchestrateBookEnrichment', () => {
     it('returns audioEnriched: false when enrichBookFromAudioWithinAdmissionLock reports no enrichment', async () => {
       mockEnrichBookFromAudio.mockResolvedValue({ enriched: false });
 
-      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect(result).toEqual({ audioEnriched: false });
     });
@@ -164,7 +168,7 @@ describe('orchestrateBookEnrichment', () => {
     it('calls metadataService.enrichBook with provided ASIN', async () => {
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValue({ duration: 7200 });
 
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, {
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, {
         primaryAsin: 'B001',
         alternateAsins: [],
         existingNarrator: null,
@@ -184,7 +188,7 @@ describe('orchestrateBookEnrichment', () => {
         return { duration: 7200 };
       });
 
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: 'B001' });
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: 'B001' });
 
       expect(callOrder).toEqual(['audio', 'audnexus']);
     });
@@ -195,12 +199,12 @@ describe('orchestrateBookEnrichment', () => {
       mockEnrichBookFromAudio.mockRejectedValue(new Error('Audio scan failed'));
 
       await expect(
-        orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null }),
+        orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null }),
       ).rejects.toThrow('Audio scan failed');
     });
 
     it('does not emit events — eventHistory is not part of EnrichmentDeps', async () => {
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect('eventHistory' in deps).toBe(false);
       expect(Object.keys(deps).sort()).toEqual(['bookService', 'db', 'log', 'metadataService', 'settingsService']);
@@ -1138,5 +1142,123 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
     expect(updateChain.set).toHaveBeenCalled();
     expect(deps.log.info).toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+  });
+});
+
+// The provider fill-empty rule refused any book that already had genres, which is every book the
+// marker rule exists for — the inference is additive on top of whatever the row ends up holding.
+describe('applyAudnexusEnrichment — litRPG marker inference (#2535)', () => {
+  let deps: ReturnType<typeof createMockDeps>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps = createMockDeps();
+  });
+
+  const genreCalls = (d: typeof deps) =>
+    (d.bookService.update as ReturnType<typeof vi.fn>).mock.calls.filter((c) => 'genres' in (c[1] as object));
+
+  it('AC17: appends the inferred genre to a row that already has genres', async () => {
+    const { db } = dbWithUpdateChain({ title: 'Mage Tank 2: A LitRPG Adventure', genres: ['Humor', 'Fantasy'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ genres: ['Ignored'] });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([[42, { genres: ['Humor', 'Fantasy', 'LitRPG'] }, { tx: expect.anything() }]]);
+    expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Humor', 'Fantasy', 'LitRPG']);
+  });
+
+  it('AC17: an empty row takes provider genres and the inferred genre in ONE update', async () => {
+    const { db } = dbWithUpdateChain({ title: 'Mage Tank 2: A LitRPG Adventure', genres: null });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ genres: ['Fantasy', 'Humor'] });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([[42, { genres: ['Fantasy', 'Humor', 'LitRPG'] }, { tx: expect.anything() }]]);
+  });
+
+  it('reads a marker carried only by the series name', async () => {
+    const { db } = dbWithUpdateChain({ title: 'Book Two', seriesName: 'Chrysalis: A GameLit Saga', genres: ['Fantasy'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([[42, { genres: ['Fantasy', 'GameLit'] }, { tx: expect.anything() }]]);
+  });
+
+  // AC18: the same pass fills the subtitle, so the pre-update row.subtitle cannot be the input.
+  it('AC18: infers from a subtitle this pass is filling, not from the pre-update null', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ title: 'Chaos Seeds', subtitle: null, genres: ['Fantasy'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ subtitle: 'A LitRPG Saga (Chaos Seeds, Book 8)' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(updateChain.set.mock.calls[0]![0]).toMatchObject({ subtitle: 'A LitRPG Saga (Chaos Seeds, Book 8)' });
+    expect(genreCalls(deps)).toEqual([[42, { genres: ['Fantasy', 'LitRPG'] }, { tx: expect.anything() }]]);
+  });
+
+  // A subtitle the pass declines to write must not feed the inference either.
+  it('does not infer from a provider subtitle the live row already suppresses', async () => {
+    const { db } = dbWithUpdateChain({ title: 'Chaos Seeds', subtitle: 'Kept Subtitle', genres: ['Fantasy'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'A LitRPG Saga' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([]);
+  });
+
+  it('AC19: a genres tombstone suppresses the inferred write too', async () => {
+    const { db } = dbWithUpdateChain({
+      title: 'Mage Tank 2: A LitRPG Adventure',
+      genres: ['Fantasy'],
+      userClearedFields: '["genres"]',
+    });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ narrators: ['A Narrator'] });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([]);
+    expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+  });
+
+  it('AC20: a stale identity drops the inferred write and fires no telemetry', async () => {
+    const updateChain = mockDbChain();
+    const db = {
+      update: vi.fn().mockReturnValue(updateChain),
+      select: vi.fn()
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))
+        .mockReturnValue(mockDbChain([{
+          asin: 'B999_REIDENTIFIED', userClearedFields: null, duration: null, subtitle: null,
+          publisher: null, genres: ['Fantasy'], title: 'Mage Tank 2: A LitRPG Adventure', seriesName: null,
+        }])),
+    } as unknown as Db & { transaction: unknown };
+    db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db: db as Db });
+
+    expect(genreCalls(deps)).toEqual([]);
+    expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+  });
+
+  // AC9: no marker and nothing for the provider rule to fill means no genres key reaches update().
+  it('issues no genres write at all for an unmarked book that already has genres', async () => {
+    const { db } = dbWithUpdateChain({ title: 'Dungeon Crawler Carl', genres: ['Humor', 'Fantasy'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ genres: ['Fantasy'] });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([]);
+    expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+  });
+
+  it('does not re-append a genre the row already carries in another casing', async () => {
+    const { db } = dbWithUpdateChain({ title: 'A LitRPG Adventure', genres: ['litrpg'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(genreCalls(deps)).toEqual([]);
   });
 });

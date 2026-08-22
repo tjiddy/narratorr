@@ -12,6 +12,6 @@ export type {
   AddBookRequest,
   AddBookResolve,
   AddBookResult,
-  ExclusionGate,
+  ExclusionPort,
 } from './add-book.js';
 export type { AddBookSeed, IdentityPolicy } from './resolve.js';

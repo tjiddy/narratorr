@@ -7,6 +7,7 @@ import {
 import { vi, type Mock } from 'vitest';
 import type { Db } from '@db/index.js';
 import { config } from '../config.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import type { AggregateSearchStatus } from '../services/indexer-search.service.js';
 import { registerRoutes } from '../routes/index.js';
 import type { AuthService } from '../services/auth.service.js';
@@ -217,7 +218,19 @@ export function createMockDb(): Record<'select' | 'insert' | 'update' | 'delete'
   return db;
 }
 
-export function createMockLogger(): Record<string, Mock | string> {
+export interface MockLogger {
+  info: Mock;
+  warn: Mock;
+  error: Mock;
+  debug: Mock;
+  fatal: Mock;
+  trace: Mock;
+  child: Mock;
+  level: string;
+  silent: Mock;
+}
+
+export function createMockLogger(): MockLogger {
   return {
     info: vi.fn(),
     warn: vi.fn(),
@@ -252,6 +265,11 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
       // An empty sweep, so a test that reaches DELETE /api/books/missing without configuring it
       // sees the no-op rather than a 500 from the rejecting default.
       presets.deleteMissingBooks = vi.fn().mockResolvedValue({ deleted: 0, failed: 0 });
+    }
+    if (name === 'importListExclusion') {
+      // Every fix-match releases the add ledger (#2530); an unrelated route test should see the
+      // nothing-to-release answer rather than the contained-failure warn path.
+      presets.removeAdded = vi.fn().mockResolvedValue(0);
     }
     services[name] = new Proxy({ ...presets, ...overrides?.[name] } as Record<string | symbol, unknown>, {
       get(target, prop) {
@@ -288,6 +306,8 @@ export function resetMockServices(services: Services) {
           mock.mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() });
         } else if (serviceName === 'bookDeletion' && methodName === 'deleteMissingBooks') {
           mock.mockResolvedValue({ deleted: 0, failed: 0 });
+        } else if (serviceName === 'importListExclusion' && methodName === 'removeAdded') {
+          mock.mockResolvedValue(0);
         } else {
           mock.mockRejectedValue(new Error(`mock not configured: ${serviceName}.${methodName}`));
         }
@@ -345,4 +365,43 @@ export function mockSearchAllWithStatus<T>(results: T[], overrides?: SearchStatu
 /** `searchAllWithStatus` double mapping each transport query to its results; unlisted queries answer zero. */
 export function answeringSearchStatus<T>(byQuery: Record<string, T[]>, overrides?: SearchStatusOverrides): Mock {
   return vi.fn().mockImplementation(async (query: string) => searchStatus(byQuery[query] ?? [], overrides));
+}
+
+/**
+ * Park the search deadline's own timer and hand back its callbacks, so an expiry case fires the
+ * real production deadline on demand instead of waiting 25 minutes or doubling `withSearchDeadline`.
+ * Every other timer in the process stays real — the delay is the discriminator.
+ *
+ * This only works because the deadline is a hand-rolled `AbortController` + `setTimeout`;
+ * `AbortSignal.timeout` schedules on a native timer the spy never sees. Restore with
+ * `vi.restoreAllMocks()`.
+ */
+export interface ArmedDeadlineTimer {
+  /** Fire the parked callback, i.e. expire the deadline. */
+  (): void;
+  /** The handle production received, so a suite can pin `clearTimeout`'s argument rather than its count. */
+  handle: ReturnType<typeof setTimeout>;
+  /** How many times production called `.unref()` on that handle; the park's own call is excluded. */
+  unrefCount: number;
+}
+
+export function captureDeadlineTimers(): ArmedDeadlineTimer[] {
+  const captured: ArmedDeadlineTimer[] = [];
+  const original = globalThis.setTimeout;
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+    if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+    const parked = original(() => { /* never fires within a test */ }, 2 ** 30);
+    parked.unref();
+
+    const armed = (() => { fn(); }) as ArmedDeadlineTimer;
+    armed.handle = parked;
+    armed.unrefCount = 0;
+    // Patched after the park's own unref, so the count reports production's calls only.
+    const parkedUnref = parked.unref.bind(parked);
+    parked.unref = () => { armed.unrefCount++; return parkedUnref(); };
+
+    captured.push(armed);
+    return parked;
+  }) as never);
+  return captured;
 }

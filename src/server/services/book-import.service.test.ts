@@ -27,7 +27,7 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(999, nudge);
 
-      expect(result).toEqual({ error: 'Book not found', status: 404 });
+      expect(result).toEqual({ error: 'Book not found', code: 'book_not_found', status: 404 });
       expect(nudge).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
       expect(db.update).not.toHaveBeenCalled();
@@ -38,7 +38,7 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'Import already in progress', status: 409 });
+      expect(result).toEqual({ error: 'Import already in progress', code: 'already_importing', status: 409 });
       expect(nudge).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
     });
@@ -52,7 +52,11 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(result).toEqual({
+        error: 'An import job for this book is already queued or running',
+        code: 'active_job_exists',
+        status: 409,
+      });
       expect(nudge).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
     });
@@ -66,7 +70,11 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(result).toEqual({
+        error: 'An import job for this book is already queued or running',
+        code: 'active_job_exists',
+        status: 409,
+      });
       expect(db.insert).not.toHaveBeenCalled();
     });
 
@@ -77,7 +85,7 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'No failed import job found for this book', status: 400 });
+      expect(result).toEqual({ error: 'No failed import job found for this book', code: 'no_failed_job', status: 400 });
       expect(nudge).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
     });
@@ -188,7 +196,11 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(result).toEqual({
+        error: 'An import job for this book is already queued or running',
+        code: 'active_job_exists',
+        status: 409,
+      });
       expect(nudge).not.toHaveBeenCalled();
       expect(db.update).not.toHaveBeenCalled();
     });
@@ -206,7 +218,11 @@ describe('BookImportService', () => {
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(result).toEqual({
+        error: 'An import job for this book is already queued or running',
+        code: 'active_job_exists',
+        status: 409,
+      });
       expect(nudge).not.toHaveBeenCalled();
     });
 

@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { retrySearch, createRetrySearchDeps, type RetrySearchDeps } from './retry-search.js';
 import { RetryBudget } from './retry-budget.js';
-import { createMockLogger, inject, createMockSettingsService, mockSearchAllWithStatus, answeringSearchStatus } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService, mockSearchAllWithStatus, answeringSearchStatus, captureDeadlineTimers, searchStatus } from '../__tests__/helpers.js';
+import { _resetSearchRegistryForTesting } from './search-deadline.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
@@ -14,7 +16,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { BYTES_PER_GB } from '@shared/constants.js';
 import { IndexerError } from '@core/indexers/errors.js';
-import { MAX_SEARCH_RUNGS } from './search-query-ladder.js';
+import { MAX_SEARCH_RUNGS, buildQueryLadder } from './search-query-ladder.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -95,6 +97,16 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
     ...overrides,
   };
 }
+
+// `inFlightSearches` is module-level state (#2477 AC11): a case that parks a retry and never
+// settles it would otherwise convert a later case's ladder into a silent `already_active`.
+beforeEach(() => {
+  _resetSearchRegistryForTesting();
+});
+
+afterEach(() => {
+  _resetSearchRegistryForTesting();
+});
 
 describe('retrySearch', () => {
   it('searches, filters blacklist, ranks, and grabs best candidate', async () => {
@@ -872,6 +884,29 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     );
   });
 
+  // #2573 decision 5 / #2310 AC8: the retry path stays cap-only. Its tail is fixed at two waves
+  // whatever the candidate count, and `withSearchDeadline` has already released the caller.
+  it('passes no signal into the enrichment options (#2573 AC9)', async () => {
+    const usenetResult = {
+      ...mockSearchResult,
+      protocol: 'usenet' as const,
+      downloadUrl: 'http://nzb.test/1',
+      infoHash: undefined,
+    };
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAllWithStatus: mockSearchAllWithStatus([usenetResult]),
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    const options = mockEnrichUsenet.mock.calls[0]![3] as Record<string, unknown>;
+    // `not.objectContaining({ signal: anything() })` passes against a present-but-undefined key.
+    expect(options).not.toHaveProperty('signal');
+    expect(options).toEqual({ maxPhase2Fetches: 10 });
+  });
+
   it('usenet result with reject word in NZB name is filtered out before grab', async () => {
     const usenetResult = {
       ...mockSearchResult,
@@ -1372,4 +1407,420 @@ describe('retrySearch — #2322 unsatisfied limit', () => {
       expect(deps.eventHistory.create).not.toHaveBeenCalled();
     });
   }
+});
+
+/**
+ * #2477 — the retry ladder joins the bounded, per-book-registered regime the other four automatic
+ * search-and-grab surfaces already run under. The deadline is a hand-rolled `AbortController` +
+ * `setTimeout`, so `captureDeadlineTimers()` parks the real production timer and fires it on
+ * demand; no case here substitutes a double for `withSearchDeadline`.
+ */
+describe('retrySearch — deadline and single-flight (#2477)', () => {
+  let armed: Array<() => void>;
+
+  const parkedSearch = () => vi.fn(() => new Promise<never>(() => { /* never settles */ }));
+
+  /** A colon-segmented title is what makes the ladder longer than one rung. */
+  const franchiseBook: BookWithAuthor = {
+    ...createMockDbBook({ duration: 3600, title: 'Star Wars: The High Republic: Haunted Starlight' }),
+    authors: [{ ...createMockDbAuthor(), name: 'George Mann' }],
+    narrators: [],
+  };
+
+  const signalOf = (call: unknown[]): AbortSignal => (call[1] as { signal: AbortSignal }).signal;
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+    armed = captureDeadlineTimers();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('AC1 — the ladder and grab run inside the shared deadline', () => {
+    it('arms exactly one timer, at SEARCH_DEADLINE_MS, for an admitted run', async () => {
+      const deps = createDeps();
+
+      await expect(retrySearch(1, deps)).resolves.toMatchObject({ outcome: 'retried' });
+
+      // The capture only parks delays equal to SEARCH_DEADLINE_MS, so the length pins both the
+      // constant and the cardinality: an inlined budget or a nested wrap moves this number.
+      expect(armed).toHaveLength(1);
+    });
+
+    it('clears the deadline timer when rung one answers immediately', async () => {
+      const cleared = vi.spyOn(globalThis, 'clearTimeout');
+      const setTimeoutSpy = vi.mocked(globalThis.setTimeout);
+
+      await expect(retrySearch(1, createDeps())).resolves.toMatchObject({ outcome: 'retried' });
+
+      const index = setTimeoutSpy.mock.calls.findIndex((call) => call[1] === SEARCH_DEADLINE_MS);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(cleared).toHaveBeenCalledWith(setTimeoutSpy.mock.results[index]!.value);
+    });
+  });
+
+  describe('AC5 — the deadline signal reaches the aggregate executor', () => {
+    it('passes a live AbortSignal to searchAllWithStatus', async () => {
+      const searchAllWithStatus = mockSearchAllWithStatus([mockSearchResult]);
+      const deps = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }) });
+
+      await retrySearch(1, deps);
+
+      const options = searchAllWithStatus.mock.calls[0]![1] as Record<string, unknown>;
+      expect(options).toHaveProperty('signal');
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      expect((options.signal as AbortSignal).aborted).toBe(false);
+    });
+
+    it('gives every rung of a multi-rung ladder the SAME signal instance', async () => {
+      const searchAllWithStatus = answeringSearchStatus<typeof mockSearchResult>({});
+      const deps = createDeps({
+        indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
+        bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue(franchiseBook) }),
+      });
+      const ladder = buildQueryLadder({ title: franchiseBook.title, author: 'George Mann' });
+      expect(ladder.length).toBeGreaterThan(1);
+
+      await expect(retrySearch(1, deps)).resolves.toEqual({ outcome: 'no_candidates' });
+
+      expect(searchAllWithStatus).toHaveBeenCalledTimes(ladder.length);
+      const signals = searchAllWithStatus.mock.calls.map(signalOf);
+      for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+      expect(new Set(signals).size).toBe(1);
+    });
+
+    it('aborts that signal when the deadline expires', async () => {
+      const searchAllWithStatus = parkedSearch();
+      const deps = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }) });
+
+      const running = retrySearch(1, deps);
+      await vi.waitFor(() => expect(searchAllWithStatus).toHaveBeenCalled());
+      const signal = signalOf(searchAllWithStatus.mock.calls[0]!);
+      expect(signal.aborted).toBe(false);
+
+      armed[0]!();
+
+      await expect(running).resolves.toMatchObject({ outcome: 'retry_error' });
+      expect(signal.aborted).toBe(true);
+    });
+  });
+
+  describe('AC6 — expiry resolves a definite outcome and never rejects', () => {
+    it('maps the deadline to retry_error, warns with budgetMs, and never reaches the grab', async () => {
+      const log = createMockLogger();
+      const searchAllWithStatus = parkedSearch();
+      const deps = createDeps({
+        indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
+        log: inject<FastifyBaseLogger>(log),
+      });
+
+      const running = retrySearch(1, deps);
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!();
+
+      await expect(running).resolves.toEqual({
+        outcome: 'retry_error',
+        error: expect.stringContaining('deadline'),
+      });
+      expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          // A sibling field, not a serializeError key: that serializer emits a fixed set and drops it.
+          budgetMs: SEARCH_DEADLINE_MS,
+          error: expect.objectContaining({ type: 'SearchDeadlineError' }),
+        }),
+        'Retry search failed',
+      );
+    });
+
+    // A control, not the ordering counterfactual: reverting search-deadline.ts's reject-before-abort
+    // order does NOT red this case, because the inner catch converts the leaf failure into a
+    // RESOLVED retry_error several microtasks later, so the timeout always settles first. That
+    // ordering is pinned where it discriminates — search-deadline.test.ts:125. What this case pins
+    // is the verdict the caller receives: the deadline, never the leaf the abort provoked.
+    it('delivers the canonical deadline error even when the executor rejects from its own abort listener', async () => {
+      const leafError = new Error('leaf rejected from its abort listener');
+      const searchAllWithStatus = vi.fn((_query: string, options: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(leafError));
+        }));
+      const deps = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }) });
+
+      const running = retrySearch(1, deps);
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!();
+
+      const result = await running;
+      expect(result).toEqual({ outcome: 'retry_error', error: expect.stringContaining('deadline') });
+      expect((result as { error: string }).error).not.toContain('leaf rejected');
+    });
+
+    // The inner catch converts the abandoned leaf failure to a resolved `retry_error`, so the
+    // helper's RESOLVED reaction is the one that fires. Either way nothing escapes to Node.
+    it('absorbs the abandoned work with no unhandled rejection', async () => {
+      const log = createMockLogger();
+      const leafError = new Error('leaf rejected from its abort listener');
+      const searchAllWithStatus = vi.fn((_query: string, options: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(leafError));
+        }));
+      const deps = createDeps({
+        indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
+        log: inject<FastifyBaseLogger>(log),
+      });
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const running = retrySearch(1, deps);
+        await vi.waitFor(() => expect(armed).toHaveLength(1));
+        armed[0]!();
+        await expect(running).resolves.toMatchObject({ outcome: 'retry_error' });
+
+        await vi.waitFor(() => expect(log.debug).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 1, budgetMs: SEARCH_DEADLINE_MS }),
+          'Abandoned search work resolved after its deadline',
+        ));
+        await new Promise((resolve) => { setTimeout(resolve, 10); });
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+  });
+
+  describe('AC3/AC4 — per-book single flight', () => {
+    it('resolves already_active without a second ladder or a second timer', async () => {
+      const searchAllWithStatus = parkedSearch();
+      const deps = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }) });
+
+      const first = retrySearch(1, deps);
+      await vi.waitFor(() => expect(searchAllWithStatus).toHaveBeenCalledTimes(1));
+
+      await expect(retrySearch(1, deps)).resolves.toEqual({ outcome: 'already_active' });
+
+      expect(searchAllWithStatus).toHaveBeenCalledTimes(1);
+      expect(armed).toHaveLength(1);
+
+      armed[0]!();
+      await expect(first).resolves.toMatchObject({ outcome: 'retry_error' });
+    });
+
+    it('consumes no budget attempt on a collision', async () => {
+      const holder = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: parkedSearch() }) });
+      // A separate budget for the colliding caller, so its attempt counter is read as a delta from
+      // zero rather than from whatever the parked run already spent.
+      const arriving = createDeps();
+      const consumeAttempt = vi.spyOn(arriving.retryBudget, 'consumeAttempt');
+
+      const parked = retrySearch(1, holder);
+      await vi.waitFor(() => expect(holder.indexerSearchService.searchAllWithStatus).toHaveBeenCalled());
+
+      await expect(retrySearch(1, arriving)).resolves.toEqual({ outcome: 'already_active' });
+      expect(consumeAttempt).not.toHaveBeenCalled();
+
+      armed[0]!();
+      await parked;
+      _resetSearchRegistryForTesting();
+
+      await expect(retrySearch(1, arriving)).resolves.toMatchObject({ outcome: 'retried' });
+      expect(consumeAttempt).toHaveBeenCalledTimes(1);
+      expect(consumeAttempt.mock.results[0]!.value).toBe(1);
+    });
+
+    it('logs a registry collision distinguishably from the early grab-blocker skip', async () => {
+      const collisionLog = createMockLogger();
+      const holder = createDeps({
+        indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: parkedSearch() }),
+        log: inject<FastifyBaseLogger>(collisionLog),
+      });
+      const arriving = createDeps({ log: inject<FastifyBaseLogger>(collisionLog) });
+
+      const parked = retrySearch(1, holder);
+      await vi.waitFor(() => expect(holder.indexerSearchService.searchAllWithStatus).toHaveBeenCalled());
+      await retrySearch(1, arriving);
+
+      expect(collisionLog.info).toHaveBeenCalledWith(
+        { bookId: 1, title: 'The Way of Kings' },
+        'Retry search skipped — this book already has one in flight',
+      );
+
+      const blockerLog = createMockLogger();
+      armed[0]!();
+      await parked;
+      _resetSearchRegistryForTesting();
+      await retrySearch(1, createDeps({
+        downloadOrchestrator: inject<DownloadOrchestrator>({
+          hasGrabBlocker: vi.fn().mockResolvedValue(true),
+          grabForRetry: vi.fn(),
+        }),
+        log: inject<FastifyBaseLogger>(blockerLog),
+      }));
+
+      expect(blockerLog.debug).toHaveBeenCalledWith(
+        { bookId: 1, title: 'The Way of Kings' },
+        'Retry search skipped — book already has a grab blocker (early)',
+      );
+      expect(blockerLog.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Retry search skipped — this book already has one in flight',
+      );
+    });
+
+    it('clears the registry on reset so a previously parked book is not gated forever', async () => {
+      const holder = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: parkedSearch() }) });
+      void retrySearch(1, holder);
+      await vi.waitFor(() => expect(holder.indexerSearchService.searchAllWithStatus).toHaveBeenCalled());
+      await expect(retrySearch(1, createDeps())).resolves.toEqual({ outcome: 'already_active' });
+
+      _resetSearchRegistryForTesting();
+
+      await expect(retrySearch(1, createDeps())).resolves.toMatchObject({ outcome: 'retried' });
+    });
+  });
+
+  describe('AC2 — pre-checks stay outside the wrap', () => {
+    const preChecks: Array<{ name: string; deps: () => RetrySearchDeps; outcome: string }> = [
+      {
+        name: 'exhausted',
+        deps: () => {
+          const deps = createDeps();
+          deps.retryBudget.consumeAttempt(1);
+          deps.retryBudget.consumeAttempt(1);
+          deps.retryBudget.consumeAttempt(1);
+          return deps;
+        },
+        outcome: 'exhausted',
+      },
+      {
+        name: 'book not found',
+        deps: () => createDeps({ bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue(null) }) }),
+        outcome: 'retry_error',
+      },
+      {
+        name: 'imported book',
+        deps: () => createDeps({
+          bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue({ ...mockBook, path: '/library/x' }) }),
+        }),
+        outcome: 'no_candidates',
+      },
+      {
+        name: 'early grab blocker',
+        deps: () => createDeps({
+          downloadOrchestrator: inject<DownloadOrchestrator>({
+            hasGrabBlocker: vi.fn().mockResolvedValue(true),
+            grabForRetry: vi.fn(),
+          }),
+        }),
+        outcome: 'already_active',
+      },
+    ];
+
+    for (const { name, deps: build, outcome } of preChecks) {
+      it(`returns ${outcome} at the ${name} pre-check with no timer and no registration`, async () => {
+        const result = await retrySearch(1, build());
+
+        expect(result.outcome).toBe(outcome);
+        expect(armed).toHaveLength(0);
+
+        // The pre-check registered nothing, so an admitted run for the same book still gets in.
+        await expect(retrySearch(1, createDeps())).resolves.toMatchObject({ outcome: 'retried' });
+        expect(armed).toHaveLength(1);
+      });
+    }
+  });
+
+  describe('AC10 — the registry is released on every arm', () => {
+    const arms: Array<{ name: string; overrides: () => Partial<RetrySearchDeps>; outcome: string }> = [
+      { name: 'retried', overrides: () => ({}), outcome: 'retried' },
+      {
+        name: 'no_candidates',
+        overrides: () => ({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: mockSearchAllWithStatus([]) }) }),
+        outcome: 'no_candidates',
+      },
+      {
+        name: 'already_active',
+        overrides: () => ({
+          downloadOrchestrator: inject<DownloadOrchestrator>({
+            hasGrabBlocker: vi.fn().mockResolvedValue(false),
+            grabForRetry: vi.fn().mockResolvedValue('already_active'),
+          }),
+        }),
+        outcome: 'already_active',
+      },
+      {
+        name: 'retry_error',
+        overrides: () => ({
+          indexerSearchService: inject<IndexerSearchService>({
+            searchAllWithStatus: vi.fn().mockRejectedValue(new IndexerError('TestIndexer', 'Indexer down')),
+          }),
+        }),
+        outcome: 'retry_error',
+      },
+    ];
+
+    for (const { name, overrides, outcome } of arms) {
+      it(`frees the book after ${name}, so the next retry runs a fresh ladder`, async () => {
+        const deps = createDeps(overrides());
+
+        expect((await retrySearch(1, deps)).outcome).toBe(outcome);
+        expect(armed).toHaveLength(1);
+
+        const second = createDeps();
+        await expect(retrySearch(1, second)).resolves.toMatchObject({ outcome: 'retried' });
+        expect(armed).toHaveLength(2);
+      });
+    }
+
+    it('frees the book after an expiry, once the abandoned work finally settles', async () => {
+      let release!: () => void;
+      // One gate for every rung: releasing only the parked rung would leave the ladder hanging on
+      // the next one, and the registry would look permanently occupied for the wrong reason.
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const searchAllWithStatus = vi.fn(async () => { await gate; return searchStatus([]); });
+      const deps = createDeps({ indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }) });
+
+      const running = retrySearch(1, deps);
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!();
+      await expect(running).resolves.toMatchObject({ outcome: 'retry_error' });
+
+      // The registry holds the WORK promise, so it is still occupied until the abandoned run settles.
+      await expect(retrySearch(1, createDeps())).resolves.toEqual({ outcome: 'already_active' });
+
+      release();
+      await vi.waitFor(async () => {
+        expect((await retrySearch(1, createDeps())).outcome).toBe('retried');
+      });
+      expect(armed.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('AC9 — null and missing data behave as they do at HEAD, under the wrap', () => {
+    it('runs an author-less ladder when the book has no authors', async () => {
+      const searchAllWithStatus = mockSearchAllWithStatus([mockSearchResult]);
+      const deps = createDeps({
+        indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
+        bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue({ ...mockBook, authors: null }) }),
+      });
+
+      await expect(retrySearch(1, deps)).resolves.toMatchObject({ outcome: 'retried' });
+      expect(searchAllWithStatus.mock.calls[0]![0]).toBe('The Way of Kings');
+    });
+
+    it('grabs with no narrator priority and a null duration', async () => {
+      const deps = createDeps({
+        bookService: inject<BookService>({
+          getById: vi.fn().mockResolvedValue({ ...mockBook, duration: null, audioDuration: null, narrators: [] }),
+        }),
+      });
+
+      await expect(retrySearch(1, deps)).resolves.toMatchObject({ outcome: 'retried' });
+      expect(armed).toHaveLength(1);
+    });
+  });
 });

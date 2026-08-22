@@ -304,8 +304,9 @@ export class HealthCheckService {
     }
 
     try {
-      // Require both read and write access (R_OK=4, W_OK=2).
-      await this.deps.fsAccess(libraryPath, 4 | 2);
+      // Require read, write AND search access (R_OK=4, W_OK=2, X_OK=1): without X_OK a
+      // writable-but-non-searchable library root reads healthy while every import fails (#2503).
+      await this.deps.fsAccess(libraryPath, 4 | 2 | 1);
       return [{ checkName: 'library-root', state: 'healthy', target }];
     } catch (error: unknown) {
       const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;

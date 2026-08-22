@@ -28,9 +28,10 @@ describe('heldReviewItemSchema (#1711, retained)', () => {
 });
 
 describe('importSkipReasonSchema (#1822, retained — consumed by the staged DTO)', () => {
-  it('accepts the two live skip reasons', () => {
+  it('accepts the three live skip reasons', () => {
     expect(importSkipReasonSchema.safeParse('already-in-library').success).toBe(true);
     expect(importSkipReasonSchema.safeParse('already-importing').success).toBe(true);
+    expect(importSkipReasonSchema.safeParse('duplicate-copy-at-other-path').success).toBe(true);
   });
 
   it('rejects an unknown skip reason', () => {
@@ -136,6 +137,7 @@ describe('jobIdParamSchema — trim behavior', () => {
 import {
   duplicateReasonSchema,
   discoveredBookSchema,
+  scanResultSchema,
   scanDebugTraceSchema,
 } from './library-scan.js';
 
@@ -270,6 +272,44 @@ describe('discoveredBookSchema — duplicateFirstPath removed (#1925)', () => {
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data).not.toHaveProperty('duplicateFirstPath');
+  });
+});
+
+describe('discoveredBookSchema / scanResultSchema — existingPath (#2091)', () => {
+  const copyDuplicate = {
+    path: '/audiobooks/Robin Hobb/Realms of the Elderlings/02 - Royal Assassin',
+    parsedTitle: 'Royal Assassin',
+    parsedAuthor: 'Robin Hobb',
+    parsedSeries: 'Realms of the Elderlings',
+    fileCount: 1,
+    totalSize: 100,
+    isDuplicate: true,
+    duplicateReason: 'slug',
+    existingBookId: 7,
+    existingPath: '/audiobooks/Robin Hobb/Farseer Trilogy/02 - Royal Assassin',
+  };
+
+  it('round-trips existingPath on a slug duplicate', () => {
+    const result = discoveredBookSchema.safeParse(copyDuplicate);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.existingPath).toBe(copyDuplicate.existingPath);
+  });
+
+  it('accepts a discovery without existingPath', () => {
+    const { existingPath: _omitted, ...withoutPath } = copyDuplicate;
+    const result = discoveredBookSchema.safeParse(withoutPath);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.existingPath).toBeUndefined();
+  });
+
+  // Strip pin: the scan route re-parses its decorated response, so an undeclared
+  // field reaches the type but never the client.
+  it('survives scanResultSchema.parse, which strips undeclared keys', () => {
+    const parsed = scanResultSchema.parse({
+      discoveries: [{ ...copyDuplicate, previewUrl: '/api/import/preview/tok' }],
+      totalFolders: 1,
+    });
+    expect(parsed.discoveries[0]!.existingPath).toBe(copyDuplicate.existingPath);
   });
 });
 

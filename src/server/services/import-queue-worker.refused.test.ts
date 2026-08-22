@@ -10,7 +10,9 @@ import { BookService, OwnedRecordingError } from './book.service.js';
 import { ImportQueueWorker } from './import-queue-worker.js';
 import { registerImportAdapter, clearImportAdapters } from './import-adapters/registry.js';
 import type { ImportAdapter } from './import-adapters/types.js';
-import type { EventHistoryService } from './event-history.service.js';
+import { EventHistoryService } from './event-history.service.js';
+import type { BlacklistService } from './blacklist.service.js';
+import { inject } from '../__tests__/helpers.js';
 import { importFailedPayload } from '@shared/schemas/sse-events.js';
 
 const noopLog: FastifyBaseLogger = {
@@ -26,7 +28,6 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
   let db: Db;
   let bookService: BookService;
   let emitSpy: ReturnType<typeof vi.fn>;
-  let eventCreate: ReturnType<typeof vi.fn>;
   let eventHistory: EventHistoryService;
   // Refusal deletes the placeholder, so it must never enqueue reconciliation for that row.
   let reconcileBook: Mock<(bookId: number) => Promise<void>>;
@@ -40,8 +41,10 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     bookService = new BookService(db, noopLog);
     clearImportAdapters();
     emitSpy = vi.fn();
-    eventCreate = vi.fn().mockResolvedValue({});
-    eventHistory = { create: eventCreate } as unknown as EventHistoryService;
+    // The real service against the migrated DB, not a `{ create }` fake: production's tx arm hands
+    // the row to a post-commit `logRecorded`, and a partial double turns that into a silently
+    // swallowed TypeError while `create`-spy assertions observe issuance, not persistence (#2499).
+    eventHistory = new EventHistoryService(db, noopLog, inject<BlacklistService>({}), bookService);
     reconcileBook = vi.fn().mockResolvedValue(undefined);
     worker = new ImportQueueWorker(db, noopLog, { emit: emitSpy } as never, undefined, eventHistory, { reconcileBook });
   });
@@ -81,25 +84,41 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     return { bookId: book.id, jobId: job!.id };
   }
 
-  function registerRefusingAdapter(error: OwnedRecordingError): void {
+  /** Resolves once the worker has entered the adapter — the job is claimed by then. */
+  function registerAdapter(process: () => Promise<void>): Promise<void> {
+    let enter!: () => void;
+    const entered = new Promise<void>((r) => { enter = r; });
     const adapter: ImportAdapter = {
       type: 'manual',
-      async process() { throw error; },
+      async process() { enter(); return process(); },
     };
     registerImportAdapter(adapter);
+    return entered;
   }
 
-  async function runWorker(): Promise<void> {
+  function registerRefusingAdapter(error: OwnedRecordingError): Promise<void> {
+    return registerAdapter(async () => { throw error; });
+  }
+
+  /**
+   * Deterministic settlement, no wall clock (#2508): a fixed sleep lets a delayed scheduler land
+   * `stop()` before the claim — `stopping` is set first and drainOne re-checks it after its SELECT,
+   * abandoning the job. Once the adapter has been ENTERED the job is claimed (`currentJobPromise`
+   * is assigned before `processJob` is awaited), so `stop()` awaits its full completion. The tick
+   * drain absorbs post-commit fire-and-forget reporting (SSE) that follows the awaited job.
+   */
+  async function runWorker(entered: Promise<void>): Promise<void> {
     await worker.start();
-    await new Promise(r => setTimeout(r, 150));
+    await entered;
     await worker.stop();
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
   }
 
   it('single-owner review refusal: job failed, placeholder deleted, FK nulled, enriched event + SSE', async () => {
     const { bookId, jobId } = await seedForcedJob();
-    registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' }));
+    const entered = registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' }));
 
-    await runWorker();
+    await runWorker(entered);
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
@@ -112,15 +131,19 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
 
     expect(jobRow!.bookId).toBeNull();
 
-    expect(eventCreate).toHaveBeenCalledTimes(1);
-    const eventArg = eventCreate.mock.calls[0]![0];
-    expect(eventArg).toMatchObject({
+    // Persistence, not issuance: the row must be in book_events. Filter by eventType — the
+    // refusal deletes the placeholder, so the event links bookId null (#2499).
+    const failedEvents = await db.select().from(bookEvents).where(eq(bookEvents.eventType, 'import_failed'));
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]).toMatchObject({
       bookId: null,
       bookTitle: 'Forced Book',
       eventType: 'import_failed',
       source: 'manual',
     });
-    expect(eventArg.reason.refusal).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review', existingBookId: 99 });
+    expect(failedEvents[0]!.reason).toMatchObject({
+      refusal: { kind: 'forced-import-refused', recordingReason: 'recording-review', existingBookId: 99 },
+    });
 
     // SSE retains the pre-delete book id so the client can evict the placeholder.
     const failedCalls = emitSpy.mock.calls.filter(c => c[0] === 'import_failed');
@@ -142,9 +165,9 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
 
   it('2+-owner data anomaly stays fail-closed under force: refused disposition, no swap/overwrite', async () => {
     const { bookId, jobId } = await seedForcedJob();
-    registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 5, title: 'Owned', reason: 'recording-review-ambiguous-owner' }));
+    const entered = registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 5, title: 'Owned', reason: 'recording-review-ambiguous-owner' }));
 
-    await runWorker();
+    await runWorker(entered);
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
@@ -157,9 +180,9 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
 
   it('ownerless refusal (-1 sentinel) reports existingBookId null, never "book #-1"', async () => {
     const { jobId } = await seedForcedJob();
-    registerRefusingAdapter(new OwnedRecordingError({ existingBookId: -1, title: 'New Recording', reason: 'recording-review-no-disambiguator' }));
+    const entered = registerRefusingAdapter(new OwnedRecordingError({ existingBookId: -1, title: 'New Recording', reason: 'recording-review-no-disambiguator' }));
 
-    await runWorker();
+    await runWorker(entered);
 
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review-no-disambiguator', existingBookId: null });
@@ -173,9 +196,9 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     // OwnedRecordingError is force-independent; only forced imports get refusal cleanup.
     // Non-forced imports take generic failure and retain their placeholder.
     const { bookId, jobId } = await seedNonForcedJob();
-    registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' }));
+    const entered = registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' }));
 
-    await runWorker();
+    await runWorker(entered);
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
@@ -187,16 +210,15 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(jobRow!.bookId).toBe(bookId);
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toBeUndefined();
-    expect(eventCreate).not.toHaveBeenCalled();
+    expect(await db.select().from(bookEvents)).toHaveLength(0);
     expect(reconcileBook).not.toHaveBeenCalled();
   });
 
   it('non-Owned failure is unchanged: generic markJobFailed path, book reverts to failed (not deleted)', async () => {
     const { bookId, jobId } = await seedForcedJob();
-    const adapter: ImportAdapter = { type: 'manual', async process() { throw new Error('disk full'); } };
-    registerImportAdapter(adapter);
+    const entered = registerAdapter(async () => { throw new Error('disk full'); });
 
-    await runWorker();
+    await runWorker(entered);
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
@@ -206,7 +228,6 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toBeUndefined();
     expect(payload.error_message).toContain('disk full');
-    expect(eventCreate).not.toHaveBeenCalled();
     expect(jobRow!.bookId).toBe(bookId);
     const events = await db.select().from(bookEvents);
     expect(events).toHaveLength(0);
@@ -216,9 +237,9 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
   // Positive control proves the reconciler spy is live; otherwise every negative assertion is vacuous.
   it('positive control: a SUCCEEDING import on this same worker fires exactly one reconcile', async () => {
     const { bookId, jobId } = await seedForcedJob();
-    registerImportAdapter({ type: 'manual', async process() { /* succeeds */ } } as ImportAdapter);
+    const entered = registerAdapter(async () => { /* succeeds */ });
 
-    await runWorker();
+    await runWorker(entered);
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('completed');

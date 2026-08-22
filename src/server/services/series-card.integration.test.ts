@@ -11,6 +11,7 @@ import { SeriesCardService } from './series-card.service.js';
 import { loadLibraryBooksForSeriesNames } from './series-library-pool.js';
 import type { SettingsService } from './settings.service.js';
 import { upsertSeriesLink } from './book-series-link.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { spyStatements, poolStatements } from '../__tests__/statement-spy.js';
 
@@ -27,11 +28,13 @@ async function seedBookWithSeries(db: Db, opts: {
   seriesName: string | null;
   seriesPosition?: number | null;
   authorName?: string | null;
+  status?: BookStatus;
 }): Promise<number> {
   const [book] = await db.insert(books).values({ publicId: generatePublicId('bk'),
     title: opts.title,
     seriesName: opts.seriesName,
     seriesPosition: opts.seriesPosition ?? null,
+    ...(opts.status ? { status: opts.status } : {}),
   }).returning();
   if (opts.authorName) {
     const slug = opts.authorName.toLowerCase().replace(/\s+/g, '-');
@@ -2091,6 +2094,152 @@ describe('SeriesCardService — integration', () => {
         expect((await allMembers()).filter((r) => r.bookId === tombstoned)).toHaveLength(0);
         expect((await db.select().from(books).where(eq(books.id, tombstoned)))[0]!.seriesName).toBeNull();
       });
+    });
+  });
+
+  describe('#2541 — the linked book’s status bucket reaches the card', () => {
+    function mockHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      ));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    function bandPayload(): unknown {
+      return {
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [
+              { position: 1, book: { id: 7711, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } },
+              { position: 2, book: { id: 7712, slug: 'rose', title: 'Bloody Rose', image: null, users_count: 90 } },
+              { position: 3, book: { id: 7713, slug: 'outlaws', title: 'The Outlaw Kings', image: null, users_count: 80 } },
+            ],
+          }],
+        },
+      };
+    }
+
+    const SPREAD: BookStatus[] = ['wanted', 'searching', 'downloading', 'importing', 'imported', 'failed', 'missing'];
+
+    it('the pool loader projects each book’s status without a second statement', async () => {
+      const seeded: [number, BookStatus][] = [];
+      for (const [index, status] of SPREAD.entries()) {
+        seeded.push([await seedBookWithSeries(db, { title: `Volume ${index}`, seriesName: 'The Band', seriesPosition: index + 1, status }), status]);
+      }
+
+      const spy = spyStatements(db);
+      const pool = await loadLibraryBooksForSeriesNames(db, ['The Band'], log);
+      spy.restore();
+
+      expect(poolStatements(spy.executed)).toHaveLength(1);
+      expect(pool.books.map((b) => [b.id, b.status])).toEqual(seeded);
+    });
+
+    it('keeps id ordering, folded-name membership and tombstone extraction under the widened projection', async () => {
+      const first = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames', status: 'imported' });
+      const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the.band', seriesPosition: null, status: 'wanted' });
+      await seedBookWithSeries(db, { title: 'Unrelated', seriesName: 'Another Series', seriesPosition: 1 });
+      await db.update(books).set({ userClearedFields: '["seriesPosition"]' }).where(eq(books.id, drifted));
+
+      const pool = await loadLibraryBooksForSeriesNames(db, ['The Band'], log);
+
+      expect(pool.books.map((b) => b.id)).toEqual([first, drifted]);
+      expect([...pool.positionClearedIds]).toEqual([drifted]);
+    });
+
+    it('a library-only card carries a bucket on every member', async () => {
+      const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames', status: 'imported' });
+      await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, status: 'searching' });
+      globalThis.fetch = vi.fn() as typeof globalThis.fetch;
+
+      const card = await new SeriesCardService(db, log, settingsServiceWith('')).getSeriesForBook(anchor);
+
+      expect(card!.members.map((m) => [m.title, m.libraryBucket])).toEqual([
+        ['Kings of the Wyld', 'imported'],
+        ['Bloody Rose', 'downloading'],
+      ]);
+    });
+
+    it('a Hardcover card carries the matched bucket and null for its unowned members', async () => {
+      const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames', status: 'importing' });
+      await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames', status: 'failed' });
+      mockHardcover(bandPayload());
+
+      const card = await new SeriesCardService(db, log, settingsServiceWith('TEST_KEY')).getSeriesForBook(kings);
+
+      expect(card!.members.map((m) => [m.title, m.libraryBucket])).toEqual([
+        ['Kings of the Wyld', 'imported'],
+        ['Bloody Rose', 'failed'],
+        ['The Outlaw Kings', null],
+      ]);
+      for (const member of card!.members) {
+        expect(member.libraryBucket !== null).toBe(member.inLibrary);
+      }
+    });
+
+    it('a member seeded by reconciliation renders with its bucket after the transaction commits', async () => {
+      const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames', status: 'imported' });
+      const outcast = await seedBookWithSeries(db, { title: 'Outcast Sibling', seriesName: 'the band', seriesPosition: 9, authorName: 'Nicholas Eames', status: 'downloading' });
+      mockHardcover({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [{ position: 1, book: { id: 7711, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } }],
+          }],
+        },
+      });
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+
+      const card = await svc.getSeriesForBook(kings);
+
+      expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === outcast)).toHaveLength(1);
+      expect(card!.members.find((m) => m.libraryBookId === outcast)!.libraryBucket).toBe('downloading');
+    });
+
+    it('a failed seeding transaction still renders the pre-write snapshot with its buckets', async () => {
+      const kings = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames', status: 'wanted' });
+      const outcast = await seedBookWithSeries(db, { title: 'Outcast Sibling', seriesName: 'the band', seriesPosition: 9, authorName: 'Nicholas Eames', status: 'missing' });
+      mockHardcover({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [{ position: 1, book: { id: 7711, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } }],
+          }],
+        },
+      });
+      const svc = new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+      // Prime the cache first so the only transaction the next GET opens is the reconcile.
+      await svc.getSeriesForBook(kings);
+      await db.delete(seriesMembers).where(eq(seriesMembers.source, 'local'));
+      const txSpy = vi.spyOn(db, 'transaction').mockImplementationOnce(() => Promise.reject(new Error('seeding exploded')));
+
+      const card = await svc.getSeriesForBook(kings);
+      expect(txSpy).toHaveBeenCalledTimes(1);
+      txSpy.mockRestore();
+
+      expect((await db.select().from(seriesMembers)).filter((m) => m.bookId === outcast)).toHaveLength(0);
+      expect(card!.members.map((m) => [m.title, m.libraryBucket])).toEqual([
+        ['Kings of the Wyld', 'wanted'],
+        ['Outcast Sibling', 'missing'],
+      ]);
+    });
+
+    it('the post-bind card carries buckets from the post-commit render', async () => {
+      const initiating = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Nicholas Eames', status: 'searching' });
+      mockHardcover({
+        data: {
+          series: [{
+            id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' },
+            book_series: [{ position: 1, book: { id: 7711, slug: 'kings', title: 'Kings of the Wyld', image: null, users_count: 100 } }],
+          }],
+        },
+      });
+
+      const bound = await new SeriesCardService(db, log, settingsServiceWith('TEST_KEY')).bindHardcoverSeries(initiating, 5523);
+
+      expect(bound!.card.members.map((m) => [m.title, m.libraryBucket])).toEqual([['Kings of the Wyld', 'downloading']]);
     });
   });
 });

@@ -25,9 +25,11 @@ vi.mock('./rss.js', () => ({ runRssJob: vi.fn() }));
 vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
 vi.mock('./cover-backfill.js', () => ({ runCoverBackfill: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('./genre-marker-sweep.js', () => ({ runGenreMarkerSweep: vi.fn().mockResolvedValue(undefined) }));
 
 import { Cron, type CronCallback } from 'croner';
 import { runCoverBackfill } from './cover-backfill.js';
+import { runGenreMarkerSweep } from './genre-marker-sweep.js';
 import { checkForUpdate } from './version-check.js';
 import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
 
@@ -134,6 +136,24 @@ describe('startJobs', () => {
     startJobs(injectHelper<Db>(db), services, log);
 
     expect(log.info).toHaveBeenCalledWith('Background jobs started');
+  });
+
+  it('startup recovery runs every later step when an early one throws (#2557)', async () => {
+    // The first orchestrator batch fails; the boot-only backfill and sweep must still run —
+    // pre-#2557 a single throw abandoned the remainder for the process lifetime.
+    (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('db locked at boot'));
+    const { startJobs } = await import('./index.js');
+    startJobs(injectHelper<Db>(db), services, log);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+    expect(runCoverBackfill).toHaveBeenCalledTimes(1);
+    expect(runGenreMarkerSweep).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ type: 'Error', message: 'db locked at boot' }) }),
+      'Startup recovery: quality-gate batch failed',
+    );
   });
 
   it('import-maintenance task callback calls qualityGate then importOrchestrator processCompletedDownloads then deferred cleanups', async () => {
@@ -889,6 +909,22 @@ describe('startJobs', () => {
         expect.anything(), // db
         log,
         services.connector, // enables refresh notifications
+      );
+    });
+
+    it('calls runGenreMarkerSweep after the batch methods (#2535)', async () => {
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+      expect(runGenreMarkerSweep).toHaveBeenCalledWith(
+        expect.anything(), // db
+        services.book,
+        log,
       );
     });
 

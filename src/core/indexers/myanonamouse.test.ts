@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { respondInFlightUntilAborted } from '../__tests__/dispatcher-capture.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
 // Keep MSW/fetch spies on this path; the dedicated routing test covers dispatchers.
@@ -41,6 +42,22 @@ function stubTorrentDownload(server: ReturnType<typeof useMswServer>) {
       });
     }),
   );
+}
+
+/**
+ * `fetchTorrentAsDataUri` is private and its `callerSignal` parameter has no production caller yet
+ * (#2539 AC6 hardens a latent sink), so the only honest way to drive it with a signal is directly.
+ */
+function grabTorrent(
+  indexer: MyAnonamouseIndexer,
+  torrentId: number,
+  applyWedge: boolean,
+  callerSignal: AbortSignal,
+): Promise<string | undefined> {
+  const helper = indexer as unknown as {
+    fetchTorrentAsDataUri(id: number, wedge?: boolean, signal?: AbortSignal): Promise<string | undefined>;
+  };
+  return helper.fetchTorrentAsDataUri(torrentId, applyWedge, callerSignal);
 }
 
 describe('MyAnonamouseIndexer', () => {
@@ -2354,6 +2371,26 @@ describe('MyAnonamouseIndexer', () => {
         await pending;
         expect(armed).toEqual([INDEXER_TIMEOUT_MS]);
       });
+
+      it('arms no timer at all when the proxy factory refuses the config (#2548)', async () => {
+        const armed: number[] = [];
+        const realSetTimeout = globalThis.setTimeout;
+        const passThrough = realSetTimeout as unknown as (...args: unknown[]) => ReturnType<typeof setTimeout>;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: unknown[]) => {
+          if (args[1] === INDEXER_TIMEOUT_MS) armed.push(args[1] as number);
+          return passThrough(...args);
+        }) as unknown as typeof globalThis.setTimeout);
+        vi.spyOn(mamThrottle, 'acquire').mockResolvedValue(undefined);
+        const broken = new MyAnonamouseIndexer({
+          mamId: 'test-mam-id', baseUrl: MAM_BASE, proxyUrl: 'socks5://user:p%ss@proxy.test:1080',
+          searchLanguages: [1], searchType: 'active',
+        });
+
+        await expect(broken.search('test')).rejects.toThrow(ProxyError);
+
+        // The factory threw before setTimeout ran; the pre-#2548 ordering leaked a live 30s timer.
+        expect(armed).toEqual([]);
+      });
     });
 
     describe('abort propagation through the adapter', () => {
@@ -2387,6 +2424,90 @@ describe('MyAnonamouseIndexer', () => {
         server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.text('not json at all')));
 
         expect(await indexer.refreshStatus(controller.signal)).toBeNull();
+        expect(controller.signal.aborted).toBe(false);
+      });
+    });
+
+    /**
+     * #2539 — cancellation of a request already ON THE WIRE, which is a different boundary from the
+     * pre-request throttle abort above: both helpers `await mamThrottle.acquire(…, callerSignal)`
+     * before arming a timer or building a dispatcher, and the gate rejects a pre-aborted signal
+     * there. A test that pre-aborts therefore never reaches the dispatcher catch and would pass with
+     * these guards deleted, so every case here resolves the throttle and aborts on an observed
+     * in-flight request instead.
+     */
+    describe('#2539 in-flight caller aborts through the proxied path', () => {
+      const PROXY_URL = 'http://proxy.test:8080';
+
+      function proxiedIndexer(): MyAnonamouseIndexer {
+        return new MyAnonamouseIndexer({
+          mamId: 'test-mam-id', baseUrl: MAM_BASE, proxyUrl: PROXY_URL,
+          searchLanguages: [1], searchType: 'active',
+        });
+      }
+
+      /**
+       * Stubs the fetch boundary — the seam this suite's rewired helper feeds — with a request that
+       * hangs until its signal aborts. An MSW handler could not stand in: `HttpResponse.error()`
+       * carries neither an `AbortError` nor a reason.
+       */
+      function stubInFlightUntilAborted(): { onTheWire: Promise<void> } {
+        const { onTheWire, respond } = respondInFlightUntilAborted();
+        vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => respond(init as RequestInit));
+        return { onTheWire };
+      }
+
+      it('rejects search() with the caller reason, not a fabricated proxy timeout', async () => {
+        vi.spyOn(mamThrottle, 'acquire').mockResolvedValue(undefined);
+        const { onTheWire } = stubInFlightUntilAborted();
+        const controller = new AbortController();
+        const reason = new IndexerError('MyAnonamouse', 'search deadline reached');
+
+        const pending = proxiedIndexer().search('test', { signal: controller.signal });
+        await onTheWire;
+        controller.abort(reason);
+
+        await expect(pending).rejects.toBe(reason);
+        await expect(pending).rejects.not.toBeInstanceOf(ProxyError);
+      });
+
+      it('rethrows the caller reason out of fetchTorrentAsDataUri instead of degrading to undefined', async () => {
+        vi.spyOn(mamThrottle, 'acquire').mockResolvedValue(undefined);
+        const { onTheWire } = stubInFlightUntilAborted();
+        const controller = new AbortController();
+        const reason = new IndexerError('MyAnonamouse', 'grab deadline reached');
+
+        // Driven directly: this helper's `callerSignal` has no production caller yet (its only
+        // caller omits it and ResolveDownloadContext carries no signal), so routing through
+        // resolveDownloadUrl could not pass one. The guard closes the sink before it goes live.
+        const pending = grabTorrent(proxiedIndexer(), 12345, false, controller.signal);
+        await onTheWire;
+        controller.abort(reason);
+
+        // Both frames: the inner catch did not wrap it, and the outer degrade did not swallow it.
+        await expect(pending).rejects.toBe(reason);
+        await expect(pending).rejects.not.toBeInstanceOf(ProxyError);
+      });
+
+      it('control: a genuine ProxyError under a LIVE signal still propagates out of the grab', async () => {
+        vi.spyOn(mamThrottle, 'acquire').mockResolvedValue(undefined);
+        const cause = Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:8080'), { code: 'ECONNREFUSED' });
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause }));
+        const controller = new AbortController();
+
+        await expect(grabTorrent(proxiedIndexer(), 12345, false, controller.signal))
+          .rejects.toThrow(/Proxy connection failed: .*ECONNREFUSED/);
+        expect(controller.signal.aborted).toBe(false);
+      });
+
+      it('control: a genuine non-ProxyError grab failure under a LIVE signal still degrades to undefined', async () => {
+        vi.spyOn(mamThrottle, 'acquire').mockResolvedValue(undefined);
+        // Direct (unproxied) indexer: on that arm an ordinary network error is rethrown unmapped,
+        // so it reaches the outer degrade catch as a non-ProxyError — the path AC6 must not convert.
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('socket hang up'));
+        const controller = new AbortController();
+
+        await expect(grabTorrent(indexer, 12345, false, controller.signal)).resolves.toBeUndefined();
         expect(controller.signal.aborted).toBe(false);
       });
     });

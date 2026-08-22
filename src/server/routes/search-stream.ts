@@ -18,6 +18,7 @@ import type {
 } from '@shared/schemas/search-stream.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { SSE_HEARTBEAT_FRAME, startHeartbeat, stopHeartbeat } from '../utils/sse-stream.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 
 
 function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
@@ -87,7 +88,27 @@ export async function searchStreamRoutes(
         }
       });
 
+      // Bound by ABORT, not by the `Promise.race` the registered surfaces use: those must return a
+      // value, so they abandon the loser and it keeps spending paced requests. A socket writer can
+      // tear the run instead — every in-flight adapter call rejects, the ABB/MAM throttle and
+      // solver-slot waiters are evicted, and the ladder ends at that rung.
+      // Deliberately not a member of the per-book search registry: that registry keys on a book id,
+      // which this route has no usable value for (`q` is operator-editable), and a refusal costs an
+      // interactive searcher a real answer where it costs a scheduled one nothing.
+      const deadline = new AbortController();
+      let expired = false;
+      let deadlineTimer: NodeJS.Timeout | null = setTimeout(() => {
+        expired = true;
+        deadline.abort();
+      }, SEARCH_DEADLINE_MS);
+      deadlineTimer.unref();
+      const clearDeadline = (): void => {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
+        deadlineTimer = null;
+      };
+
       request.raw.on('close', () => {
+        clearDeadline();
         stopHeartbeatTimer();
         sessionManager.cleanup(session.sessionId);
       });
@@ -122,26 +143,36 @@ export async function searchStreamRoutes(
                 writeSSE(reply, 'indexer-cancelled', event);
               },
             },
-            undefined,
+            deadline.signal,
             policy.runOptions,
           );
           return { results, succeeded };
         });
 
-        const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log);
+        // The same controller the ladder got, so the tail stops starting NZB fetches at the moment
+        // the ladder is torn. It degrades rather than rejecting, which is what keeps AC7 below true.
+        const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log, deadline.signal);
         // ran.index is the last attempted rung even after exhaustion; post-processing may remove every hit.
         // Disclose relaxation only with displayed results: relaxedQuery implies results is non-empty.
         const relaxed = ran.index > 0 && processed.results.length > 0;
         const payload: SearchResponsePayload = relaxed ? { ...processed, relaxedQuery: ran.rung.query } : processed;
         writeSSE(reply, 'search-complete', payload);
       } catch (error: unknown) {
-        request.log.error({ error: serializeError(error) }, 'Search stream error');
-        writeSSE(reply, 'search-complete', {
-          results: [],
-          durationUnknown: true,
-          unsupportedResults: { count: 0, titles: [] },
-        });
+        const fallback = { results: [], durationUnknown: true, unsupportedResults: { count: 0, titles: [] } };
+        // The verdict is the closure flag, never the caught value: `abortReason` surfaces the first
+        // rejected leg's reason, an ordinary adapter error indistinguishable from a real failure.
+        // Attached on this arm only, so a timer that fires while post-processing runs cannot
+        // falsify an answer the ladder already produced.
+        if (expired) {
+          // `budgetMs` rides as a sibling; serializeError emits a fixed key set that would drop it.
+          request.log.warn({ budgetMs: SEARCH_DEADLINE_MS, error: serializeError(error) }, 'Search stream deadline exceeded');
+          writeSSE(reply, 'search-complete', { ...fallback, timedOut: true });
+        } else {
+          request.log.error({ error: serializeError(error) }, 'Search stream error');
+          writeSSE(reply, 'search-complete', fallback);
+        }
       } finally {
+        clearDeadline();
         stopHeartbeatTimer();
         reply.raw.end();
         sessionManager.cleanup(session.sessionId);

@@ -1,7 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { type BookService } from './book.service.js';
+import { type BookService, type BookWithAuthor } from './book.service.js';
 import { decideIntake } from './book-intake/index.js';
-import type { HeldReviewItem } from '@shared/schemas/library-scan.js';
+import type { HeldReviewItem, ImportSkipReason } from '@shared/schemas/library-scan.js';
+import { canonicalPath } from '../utils/path-identity.js';
 import { normalizeProductionType } from '@core/metadata/production-type.js';
 import { isAttachableStatus } from '@shared/attach-eligibility.js';
 import type { BookStatus } from '@shared/schemas/book.js';
@@ -26,7 +27,36 @@ function toIntakeItem(item: ImportConfirmItem) {
 }
 
 /** Owned duplicate result, optionally naming the incumbent for reporting. */
-export type SkipClassification = { skip: true; existingBookId?: number; existingTitle?: string };
+export type SkipClassification = {
+  skip: true;
+  reason: ImportSkipReason;
+  existingBookId?: number;
+  existingTitle?: string;
+  /** #2091: present only alongside `duplicate-copy-at-other-path`. */
+  existingPath?: string;
+};
+
+/**
+ * #2091 — an owned skip is a "copy at another path" exactly when the incumbent holds a file and
+ * that file lives somewhere other than this item's folder.
+ *
+ * Path identity goes through `canonicalPath`, the one definition of "these two strings name the
+ * same folder": stored paths are whatever passed `trim().min(1)`, so a separator- or `..`-drifted
+ * spelling of the item's OWN folder would otherwise report itself as a second copy. Anything with
+ * no knowable incumbent folder keeps the generic reason and no path — never fabricate one.
+ */
+function resolveSkipTarget(
+  itemPath: string,
+  incumbent: BookWithAuthor | null,
+  incumbentHoldsFile: boolean,
+): Omit<SkipClassification, 'skip'> {
+  if (!incumbent) return { reason: 'already-in-library' };
+  const named = { existingBookId: incumbent.id, existingTitle: incumbent.title };
+  // incumbentHoldsFile is exactly `path` being non-blank; the null check is for the type.
+  if (!incumbentHoldsFile || incumbent.path == null) return { reason: 'already-in-library', ...named };
+  if (canonicalPath(incumbent.path) === canonicalPath(itemPath)) return { reason: 'already-in-library', ...named };
+  return { reason: 'duplicate-copy-at-other-path', ...named, existingPath: incumbent.path };
+}
 
 /** #2435: the incumbent owns no file, so this item fulfils it rather than duplicating it.
  * `status` is the OBSERVED prior status; the runner's guarded transition keys on it so a status
@@ -61,10 +91,7 @@ export async function classifyConfirmItem(
       };
     }
     log.debug({ title: item.title, existingBookId: decision.incumbent?.id }, 'Skipping owned duplicate during import (same recording)');
-    return {
-      skip: true,
-      ...(decision.incumbent ? { existingBookId: decision.incumbent.id, existingTitle: decision.incumbent.title } : {}),
-    };
+    return { skip: true, ...resolveSkipTarget(item.path, decision.incumbent, decision.incumbentHoldsFile) };
   }
   if (decision.kind === 'review') {
     log.info({ title: item.title, existingBookId: decision.incumbent?.id }, 'Holding import item for recording review');

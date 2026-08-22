@@ -120,6 +120,34 @@ describe('mergeMatchIntoRow', () => {
     expect(result.book.isDuplicate).toBe(true);
   });
 
+  it('propagates existingPath alongside existingBookId in the duplicate branch (#2091)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({
+        confidence: 'high', isDuplicate: true, existingBookId: 421, duplicateReason: 'slug',
+        recordingVerdict: 'same-recording', existingPath: '/audiobooks/Author/Other Folder',
+      }),
+    );
+    expect(result.book.existingPath).toBe('/audiobooks/Author/Other Folder');
+  });
+
+  it('leaves existingPath absent when the match carries none (#2091)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', isDuplicate: true, existingBookId: 421, duplicateReason: 'slug' }),
+    );
+    expect(result.book).not.toHaveProperty('existingPath');
+  });
+
+  // A review row is not a duplicate, so nothing about an incumbent's folder may leak onto it.
+  it('does not propagate existingPath outside the duplicate branch (#2091)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', recordingVerdict: 'review', reviewReason: 'check me', existingPath: '/audiobooks/Author/Other Folder' }),
+    );
+    expect(result.book).not.toHaveProperty('existingPath');
+  });
+
   it('a non-duplicate high match still preserves selection and leaves row.book untouched (no regression)', () => {
     const result = mergeMatchIntoRow(makeRow({ selected: true }), makeMatch({ confidence: 'high' }));
     expect(result.selected).toBe(true);

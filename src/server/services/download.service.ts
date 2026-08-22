@@ -18,7 +18,7 @@ import { type DownloadClientService } from './download-client.service.js';
 import type { IndexerService } from './indexer.service.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { type CreateEventInput } from './event-history.service.js';
-import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { retrySearch, RETRY_ERROR_MESSAGE, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { resolveAdapterDownloadUrl } from './download-resolve-adapter-url.js';
 import { resolveArtifact, insertDownloadRecordOrCompensate } from './download-record.js';
@@ -403,7 +403,7 @@ export class DownloadService {
         return { status: 'already_active' };
       }
       case 'retry_error': {
-        await this.db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, id));
+        await this.db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, id));
         this.log.warn({ id, error: result.error }, 'Manual retry search failed');
         return { status: 'retry_error', error: result.error };
       }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi, type Mock } from 'vitest';
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
@@ -93,13 +93,17 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
   };
 });
 
-import { mkdir, cp, stat, readdir, writeFile, rename, rm, rmdir, statfs } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, writeFile, rename, realpath, rm, rmdir, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
+import { useMswServer } from '@core/__tests__/msw/server.js';
+import { http, HttpResponse } from 'msw';
+import { transmissionSelects } from '@core/__tests__/download-client-id-semantics.js';
+import { TransmissionClient } from '@core/download-clients/transmission.js';
 
 const now = new Date();
 
@@ -294,6 +298,13 @@ describe('ImportService', () => {
       authors: [mockAuthor],
       narrators: narratorNames.map((name, i) => ({ id: i + 1, name, slug: name.toLowerCase().replace(/\s+/g, '-'), createdAt: new Date(), updatedAt: new Date() })),
     };
+  }
+
+  function collectSetArgs(database: typeof db): Record<string, unknown>[] {
+    const setCalls = database.update.mock.results
+      .map((r: { value: unknown }) => { try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; } })
+      .filter(Boolean);
+    return setCalls.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
   }
 
   function setupDefaults() {
@@ -955,7 +966,10 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during staging');
 
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      // Per-file pair, not a recursive-rm negative: cleanup never issues rm(target, {recursive}),
+      // so that shape passes under every implementation, including one deleting file-by-file (#2534).
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
       expect(rename).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), join(BACKUP, 'old.mp3'));
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
@@ -978,7 +992,8 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('EIO during swap');
 
       expect(rename).toHaveBeenCalledWith(join(BACKUP, 'old.mp3'), join(SAME_PATH, 'old.mp3'));
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
     });
@@ -1004,7 +1019,8 @@ describe('ImportService', () => {
       expect(writeFile).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, expect.anything(), expect.anything());
       expect(rm).not.toHaveBeenCalledWith(STAGING, expect.objectContaining({ recursive: true }));
       expect(rm).not.toHaveBeenCalledWith(BACKUP, expect.objectContaining({ recursive: true }));
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
     });
 
     it('#1336 window 4: a pre-flight validateSource throw with a marker on disk preserves .import-bak + the marker', async () => {
@@ -1072,7 +1088,70 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('EACCES');
 
       expect(cp).not.toHaveBeenCalled();
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
+    });
+
+    const posixOf = (p: string) => p.split('\\').join('/');
+    const STAGING_POSIX = posixOf(STAGING);
+    const TARGET_AUDIO = `${SAME_PATH}/old.mp3`;
+
+    /**
+     * fs-spy calls with the leading path POSIX-folded. `deleteManagedBookFiles` reaches each entry
+     * through `join`, so the per-file argument is backslash-spelled on Windows — which would let a
+     * `not.toHaveBeenCalledWith` pass on the spelling rather than on the file surviving.
+     */
+    function fsCallsPosix(spy: Mock): unknown[][] {
+      return spy.mock.calls.map(([p, ...rest]: unknown[]) => [posixOf(String(p)), ...rest]);
+    }
+
+    /** Drive a pre-commit copy failure with `storedPath` as the book's persisted `books.path`. */
+    async function failCopyWithStoredPath(storedPath: string) {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: storedPath })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during staging'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during staging');
+    }
+
+    it.each([
+      ['a trailing separator', `${SAME_PATH}/`],
+      ['a doubled trailing separator', `${SAME_PATH}//`],
+      ['backslash separators', '/audiobooks\\Brandon Sanderson\\The Way of Kings'],
+    ])('#2475: a pre-commit failure preserves the operator audio when the stored path uses %s', async (_label, storedPath) => {
+      await failCopyWithStoredPath(storedPath);
+
+      // Unprotected cleanup is per-file managed delete + rmdir, never a recursive rm of the target.
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
+      expect(fsCallsPosix(vi.mocked(rm))).toContainEqual([STAGING_POSIX, { recursive: true, force: true }]);
+    });
+
+    it('#2475: a case-only difference still reads as two folders — the target is cleaned', async () => {
+      await failCopyWithStoredPath(SAME_PATH.toLowerCase());
+
+      expect(fsCallsPosix(vi.mocked(rm))).toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).toContainEqual([SAME_PATH]);
+    });
+
+    it('#2475: a successful re-import from a trailing-separator stored path persists the computed target and sweeps nothing', async () => {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: `${SAME_PATH}/` })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.importDownload(1);
+
+      expect(posixOf(result.targetPath)).toBe(SAME_PATH);
+      const persisted = collectSetArgs(db)
+        .map((a) => (typeof a.path === 'string' ? { ...a, path: posixOf(a.path) } : a));
+      expect(persisted).toContainEqual(expect.objectContaining({ status: 'imported', path: SAME_PATH }));
+      // The post-commit old-path sweep must recognise the stored spelling as the folder just imported.
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
     });
 
     it('AC4: a first-import copy failure cleans up its own partial (staged) files', async () => {
@@ -1092,13 +1171,6 @@ describe('ImportService', () => {
     const NEW_TARGET = '/audiobooks/Brandon Sanderson/The Way of Kings';
     const OLD_PATH = '/audiobooks/Brandon Sanderson/Old Title';
     const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(NEW_TARGET);
-
-    function collectSetArgs(database: typeof db): Record<string, unknown>[] {
-      const setCalls = database.update.mock.results
-        .map((r: { value: unknown }) => { try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; } })
-        .filter(Boolean);
-      return setCalls.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-    }
 
     /** Reject update #3 after commit; earlier writes and later failure reverts resolve. */
     function failPostCommitUpdate() {
@@ -1607,6 +1679,240 @@ describe('ImportService', () => {
     });
   });
 
+  /**
+   * #2538 AC8–AC12 — the automatic pipeline's adoption of the #2478 containment rule, on the MAPPED
+   * save path. Every service here is built with a RETAINED logger: the sibling mapping suite above
+   * constructs its service with an inline `createMockLogger()` no variable holds, so AC12's log
+   * assertions written against the suite-level `log` would watch a logger production never uses.
+   */
+  describe('automatic import source containment (#2538)', () => {
+    // Verbatim `REFUSAL_MESSAGES` copy: the operator reads these off the failed download row.
+    const ROOT_MESSAGE = 'Source path is a whole filesystem root — pick the folder or file that holds the book, not the entire drive';
+    const INSIDE_MESSAGE = 'Source path is inside the library root — it is already managed by the library';
+    const CONTAINS_MESSAGE = 'Source path contains the library root — importing a folder that holds your library would pull its own managed files back in';
+
+    /** `join(savePath, name)` for the default fixture — what a mapping's remote side must match whole. */
+    const FULL_REMOTE = '/downloads/The Way of Kings';
+
+    let serviceLog: ReturnType<typeof createMockLogger>;
+
+    function arm(
+      mappings: Array<{ remotePath: string; localPath: string }>,
+      libraryPath = '/audiobooks',
+    ): ImportService {
+      const settings = createMockSettingsService({ library: { path: libraryPath } });
+      const mappingService = inject<RemotePathMappingService>({
+        getByClientId: vi.fn().mockResolvedValue(mappings.map((m, i) => ({ id: i + 1, downloadClientId: 1, ...m }))),
+      });
+      serviceLog = createMockLogger();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      return new ImportService(
+        inject<Db>(db), clientService, settings,
+        inject<FastifyBaseLogger>(serviceLog), mappingService, mockBookService as never,
+      );
+    }
+
+    /**
+     * `clearAllMocks` preserves implementations, so the identity `realpath` the file-level mock ships
+     * has to be re-established around the two cases that override it — otherwise a resolved-path
+     * override leaks forward into every suite that runs after this one.
+     */
+    const identityRealpath = (): void => {
+      vi.mocked(realpath).mockReset();
+      vi.mocked(realpath).mockImplementation(async (p: unknown) => String(p) as never);
+    };
+
+    beforeEach(() => {
+      setupDefaults();
+      identityRealpath();
+    });
+
+    afterEach(identityRealpath);
+
+    // T18 — the positive control every refusal below is measured against.
+    it('still imports successfully when the mapped save path is outside the library', async () => {
+      const svc = arm([{ remotePath: '/downloads', localPath: '/mnt/complete' }]);
+
+      const result = await svc.importDownload(1);
+
+      expect(result.downloadId).toBe(1);
+      expect(cp).toHaveBeenCalled();
+      expect(serviceLog.error).not.toHaveBeenCalled();
+    });
+
+    // T19 — one case per refusal class, each reached through the mapped save path.
+    it('refuses a mapping that lands the save path ON the library root', async () => {
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/audiobooks' }]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+    });
+
+    it('refuses a mapping that lands the save path on a strict ANCESTOR of the library root', async () => {
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/media' }], '/media/audiobooks');
+
+      await expect(svc.importDownload(1)).rejects.toThrow(CONTAINS_MESSAGE);
+    });
+
+    /**
+     * AC16/D3 — the knowingly-accepted regression. A strict descendant is bounded, but `copyAudioFiles`
+     * enumerates the whole source tree, so `/audiobooks/Author` would still flatten already-managed
+     * audio into the new book. Same defect, smaller radius; one rule at three boundaries.
+     */
+    it('refuses a mapping that lands the save path UNDER the library root', async () => {
+      const svc = arm([{ remotePath: '/downloads', localPath: '/audiobooks' }]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+    });
+
+    /**
+     * The filesystem-root class has two entry routes since #2551: what the client itself reports as
+     * the save path, and a whole-path mapping whose local side is a root — `applyPathMapping` now
+     * emits the root spelling ('/', 'C:/') instead of the pre-#2551 degenerate '' there.
+     */
+    it('refuses a client save path that is a filesystem root', async () => {
+      mockAdapter.getDownload.mockResolvedValueOnce({ ...defaultDownloadItem, savePath: '/', name: '' });
+      const svc = arm([]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(ROOT_MESSAGE);
+    });
+
+    it('refuses a whole-path mapping whose local side is a filesystem root (#2551)', async () => {
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/' }]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(ROOT_MESSAGE);
+    });
+
+    /**
+     * T20/AC9 — a refusal performs ZERO filesystem work. `readdir` is armed with a real entry first so
+     * the per-file negatives have something to observe: per `import-failure-cleanup-is-per-file`, a
+     * `recursive: true` negative is vacuous because `handleImportFailure` never issues one.
+     */
+    it('touches the filesystem not at all when refusing', async () => {
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'old.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      const target = buildTargetPath('/audiobooks', '{author}/{title}', mockBook, 'Brandon Sanderson');
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/audiobooks' }]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+
+      // The marker preflight, the sibling derivation and the source stat all sit below the guard.
+      expect(stat).not.toHaveBeenCalled();
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
+      // The two observation points `handleImportFailure` would actually hit.
+      expect(rm).not.toHaveBeenCalledWith(join(target, 'old.mp3'), { force: true });
+      expect(rmdir).not.toHaveBeenCalledWith(target);
+      expect(rm).not.toHaveBeenCalled();
+      expect(rmdir).not.toHaveBeenCalled();
+    });
+
+    // T21/AC11 — the refusal lands on the existing generic terminal, with the exact payloads.
+    it('fails the download row and reverts the book to its pre-grab status', async () => {
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/audiobooks' }]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+
+      const setArgs = collectSetArgs(db);
+      expect(setArgs).toContainEqual({
+        clientStatus: 'failed',
+        pipelineStage: 'idle',
+        errorMessage: INSIDE_MESSAGE,
+      });
+      expect(setArgs).toContainEqual({ status: 'wanted', updatedAt: expect.any(Date) });
+      // Absence matters as much: nothing was imported, so no path and no promotion may be written.
+      expect(setArgs.some((s) => 'path' in s)).toBe(false);
+      expect(setArgs.some((s) => s.status === 'imported')).toBe(false);
+      expect(setArgs.some((s) => s.pipelineStage === 'imported')).toBe(false);
+    });
+
+    /**
+     * T22/AC2 — the two arms of the ENOENT interaction with `validateSource`'s mapping guidance.
+     * Both matter: the lexical layer must decide before any realpath, and an admissible-but-missing
+     * source must still produce the operator copy it produces today.
+     */
+    describe('interaction with validateSource ENOENT guidance', () => {
+      function armMissingOnDisk(): void {
+        vi.mocked(stat).mockImplementation(async (p: unknown) =>
+          String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })));
+        vi.mocked(realpath).mockImplementation(() =>
+          Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })));
+      }
+
+      it('answers the containment refusal for a source that is missing AND lexically inside the library', async () => {
+        const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/audiobooks' }]);
+        armMissingOnDisk();
+
+        await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+      });
+
+      it('still answers the mapping-configuration guidance for a missing but admissible source', async () => {
+        const svc = arm([{ remotePath: '/downloads', localPath: '/mnt/complete' }]);
+        armMissingOnDisk();
+
+        await expect(svc.importDownload(1)).rejects.toThrow(/Check your remote path mapping configuration/);
+      });
+
+      it('still answers the add-a-mapping guidance when no mapping is configured', async () => {
+        const svc = arm([]);
+        armMissingOnDisk();
+
+        await expect(svc.importDownload(1)).rejects.toThrow(/add a Remote Path Mapping/);
+      });
+    });
+
+    /**
+     * T23 — this suite fully mocks `node:fs/promises`, so a real symlink is unusable here; overriding
+     * the identity `realpath` is the only way to pin that `runImportCommit` consults the RESOLVED
+     * form. The real-link proof lives in `import-source-containment.test.ts`, the route suite and
+     * `import-orchestration.helpers.test.ts`.
+     */
+    it('refuses a lexically-innocent save path whose realpath is the library root', async () => {
+      const svc = arm([]);
+      // Fold before comparing: the save path arrives platform-spelled (`join` backslashes it on
+      // Windows), and an exact-string predicate silently never matches there.
+      vi.mocked(realpath).mockImplementation(async (p: unknown) =>
+        (String(p).split('\\').join('/') === FULL_REMOTE ? '/audiobooks' : String(p)));
+
+      await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+    });
+
+    /**
+     * T24/AC12 — exactly two error logs, neither folded into the other. The new one names the paths
+     * (the refusal message carries none and 'Resolved save path' is debug-level); the pre-existing
+     * terminal one closes the lifecycle unchanged.
+     */
+    it('emits the path-naming refusal log and the unchanged terminal log, and nothing else', async () => {
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/audiobooks' }]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
+
+      // Exact values, not expect.any(String): a matcher that accepts any string cannot tell a
+      // correct savePath from `undefined`, and reading the mis-mapping off this log is the point.
+      // `originalPath` is the pre-mapping join output, so it is platform-spelled — fold the actual.
+      const refusal = serviceLog.error.mock.calls
+        .find((c) => c[1] === 'Refusing automatic import — source path fails library containment');
+      expect(refusal).toBeDefined();
+      const fields = refusal![0] as Record<string, unknown>;
+      expect({ ...fields, originalPath: String(fields.originalPath).split('\\').join('/') }).toMatchObject({
+        downloadId: 1,
+        bookId: 1,
+        originalPath: FULL_REMOTE,
+        savePath: '/audiobooks',
+        libraryRoot: '/audiobooks',
+        reason: 'source_inside_library',
+      });
+      expect(serviceLog.error).toHaveBeenCalledWith(
+        expect.objectContaining({ elapsedMs: expect.any(Number) }),
+        'Import failed',
+      );
+      expect(serviceLog.error).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('import atomicity failures (#235 Tier 1)', () => {
     beforeEach(setupDefaults);
 
@@ -2013,26 +2319,17 @@ describe('ImportService consolidation (issue #79)', () => {
     settingsService = createMockSettingsService();
   });
 
-  it('getImportContext() narrator delimiter is ", " (comma-space), not "; "', async () => {
+  // The ", "-join narrator pin moved to src/server/utils/tag-projection.test.ts with #2480: the
+  // context no longer carries a narrator projection, and the tag write reads the row directly.
+  it('getImportContext() returns authorName from junction position-0 author', async () => {
     const bookSvc = { getById: vi.fn().mockResolvedValue(makeBookWithNarrators(['Kate Reading', 'Michael Kramer'])) };
     const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookSvc as never);
 
     db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
     const ctx = await svc.getImportContext(1);
-    expect(ctx.narratorStr).toBe('Kate Reading, Michael Kramer');
-    expect(ctx.narratorStr).not.toContain(';');
-  });
-
-  it('getImportContext() returns authorName from junction position-0 author', async () => {
-    const bookSvc = { getById: vi.fn().mockResolvedValue(makeBookWithNarrators([])) };
-    const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookSvc as never);
-
-    db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-
-    const ctx = await svc.getImportContext(1);
     expect(ctx.authorName).toBe('Brandon Sanderson');
-    expect(ctx.narratorStr).toBeNull();
+    expect(ctx.book.narrators.map(n => n.name)).toEqual(['Kate Reading', 'Michael Kramer']);
   });
 
   describe('logging improvements (#229)', () => {
@@ -2687,5 +2984,185 @@ describe('ImportService.getEligibleDownloads — externalId truthiness alignment
 
     const eligible = await svc(db).getEligibleDownloads();
     expect(eligible).toHaveLength(0);
+  });
+});
+
+/**
+ * #2488 AC7 — `handleTorrentRemoval` is private and reachable only through `importDownload`, and
+ * the point of these cases is that a real adapter REFUSES a blank stored external id. A mock
+ * adapter told to reject proves the caller's `catch` and nothing about the adapter
+ * ([[degrading-adapter-invisible-to-mock-suite]]), so this describe drives the real
+ * TransmissionClient over MSW instead.
+ */
+describe('ImportService import-time torrent removal over the real TransmissionClient (#2488)', () => {
+  const server = useMswServer();
+  const RPC_URL = 'http://localhost:9091/transmission/rpc';
+  const VALID = 'aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00';
+  const BLANK = '   ';
+
+  const torrent = {
+    hashString: VALID,
+    name: 'The Way of Kings',
+    status: 6,
+    percentDone: 1,
+    totalSize: 500_000_000,
+    downloadedEver: 500_000_000,
+    uploadedEver: 1_000_000_000,
+    uploadRatio: 2,
+    peersSendingToUs: 1,
+    peersGettingFromUs: 0,
+    eta: 0,
+    downloadDir: '/downloads',
+    addedDate: 1_700_000_000,
+    doneDate: 1_700_003_600,
+    errorString: '',
+    leftUntilDone: 0,
+  };
+
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let settingsService: ReturnType<typeof createMockSettingsService>;
+  let service: ImportService;
+  let client: TransmissionClient;
+  let removals: string[];
+  let updateChain: ReturnType<typeof mockDbChain>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = createMockDb();
+    log = createMockLogger();
+    settingsService = createMockSettingsService();
+    removals = [];
+    client = new TransmissionClient({
+      host: 'localhost', port: 9091, username: 'admin', password: 'password', useSsl: false,
+    });
+
+    const clientService = inject<DownloadClientService>({
+      getAdapter: vi.fn().mockResolvedValue(client),
+      getById: vi.fn().mockResolvedValue({ id: 1, name: 'Transmission', type: 'transmission', enabled: true }),
+    });
+    const bookService = {
+      getById: vi.fn().mockResolvedValue({ ...mockBook, authors: [mockAuthor], narrators: [] }),
+      update: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookService as never);
+
+    vi.mocked(rm).mockResolvedValue(undefined);
+    vi.mocked(rename).mockResolvedValue(undefined);
+    vi.mocked(cp).mockResolvedValue(undefined);
+    vi.mocked(stat).mockImplementation(async (p: unknown) =>
+      String(p).endsWith('.import-commit-pending')
+        ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+        : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
+    vi.mocked(readdir).mockResolvedValue([
+      { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+
+    server.use(
+      http.post(RPC_URL, async ({ request }) => {
+        const body = await request.json() as { method: string; arguments?: Record<string, unknown> };
+        if (body.method === 'torrent-remove') {
+          for (const t of transmissionSelects(body.arguments?.ids, [torrent])) removals.push(t.hashString);
+          return HttpResponse.json({ result: 'success', arguments: {} });
+        }
+        return HttpResponse.json({
+          result: 'success',
+          arguments: { torrents: transmissionSelects(body.arguments?.ids, [torrent]) },
+        });
+      }),
+    );
+  });
+
+  function seed(externalId: string, importSettings: Record<string, unknown>) {
+    const settingsGet = settingsService.get as Mock;
+    settingsGet.mockImplementation((key: string) => {
+      if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+      if (key === 'import') return Promise.resolve(importSettings);
+      return Promise.resolve({});
+    });
+    db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, externalId }]));
+    updateChain = mockDbChain();
+    db.update.mockReturnValue(updateChain);
+  }
+
+  function writtenPayloads() {
+    return (updateChain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+  }
+
+  /**
+   * The reachability boundary AC7's immediate-removal bullet turns on: `resolveSavePath`
+   * (`src/server/utils/download-path.ts:22`) throws on a `null` read, and it runs BEFORE the
+   * import body, so a blank-id row aborts there and `handleTorrentRemoval` is never reached at
+   * all. Unchanged by the guard — the pre-#2488 adapter's `ids: ['   ']` matched nothing and
+   * produced the same `null` — so this pins existing behavior rather than adding any.
+   */
+  it('aborts a blank-id import at save-path resolution, never reaching the removal stage', async () => {
+    seed(BLANK, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+
+    await expect(service.importDownload(1)).rejects.toThrow(/not found in client/);
+
+    expect(removals).toEqual([]);
+    expect(writtenPayloads().some((p) => 'pendingCleanup' in p)).toBe(false);
+    expect(log.error).not.toHaveBeenCalledWith(expect.anything(), 'Failed to remove torrent after import');
+  });
+
+  it('control: the same harness imports a valid id and deletes the torrent with its files', async () => {
+    seed(VALID, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+
+    const result = await service.importDownload(1);
+
+    expect(result.downloadId).toBe(1);
+    expect(removals).toEqual([VALID]);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: VALID, clientType: 'transmission', deleteFiles: true }),
+      'Torrent removed from client after import',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AC7's second arm reached where it IS reachable. With `minSeedRatio > 0` the ratio read runs
+   * first; a row the client cannot resolve yields `live-state-unavailable`, which defers and sets
+   * `pendingCleanup` for the next cycle rather than failing the import.
+   */
+  it('defers and sets pendingCleanup when the ratio gate cannot resolve the row', async () => {
+    seed(VALID, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0, minFreeSpaceGB: 0 });
+    // Resolve the save path, then answer the ratio read as a torrent the client no longer holds.
+    let reads = 0;
+    server.use(
+      http.post(RPC_URL, async ({ request }) => {
+        const body = await request.json() as { method: string; arguments?: Record<string, unknown> };
+        if (body.method === 'torrent-remove') {
+          for (const t of transmissionSelects(body.arguments?.ids, [torrent])) removals.push(t.hashString);
+          return HttpResponse.json({ result: 'success', arguments: {} });
+        }
+        const held = reads++ === 0 ? [torrent] : [];
+        return HttpResponse.json({
+          result: 'success',
+          arguments: { torrents: transmissionSelects(body.arguments?.ids, held) },
+        });
+      }),
+    );
+
+    await service.importDownload(1);
+
+    expect(removals).toEqual([]);
+    expect(writtenPayloads()).toContainEqual(
+      expect.objectContaining({ pendingCleanup: expect.any(Date) }),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      { downloadId: 1 },
+      'Skipping torrent removal — cannot fetch current state, deferring',
+    );
+  });
+
+  it('control: a satisfied ratio removes instead of deferring', async () => {
+    seed(VALID, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0, minFreeSpaceGB: 0 });
+
+    await service.importDownload(1);
+
+    expect(removals).toEqual([VALID]);
+    expect(writtenPayloads().some((p) => 'pendingCleanup' in p)).toBe(false);
   });
 });

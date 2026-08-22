@@ -1,15 +1,15 @@
-import { describe, it, expect, type Mock } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerParseStats, IndexerParseTrace, IndexerSearchResponse } from '@core/index.js';
 import { logIndexerSearchTrace } from './indexer-search-trace.js';
 import type { IndexerRow } from './types.js';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockLogger, inject, type MockLogger } from '../__tests__/helpers.js';
 
 const INDEXER = inject<IndexerRow>({ name: 'AudioBookBay', type: 'abb' });
 
 const NO_DROPS: IndexerParseStats['dropped'] = { emptyTitle: 0, noUrl: 0, other: 0 };
 
-function run(debugTrace: IndexerParseTrace[], dropped = NO_DROPS): Record<string, Mock | string> {
+function run(debugTrace: IndexerParseTrace[], dropped = NO_DROPS): MockLogger {
   const log = createMockLogger();
   const response: IndexerSearchResponse = {
     results: [],
@@ -20,8 +20,8 @@ function run(debugTrace: IndexerParseTrace[], dropped = NO_DROPS): Record<string
   return log;
 }
 
-function callsWith(log: Record<string, Mock | string>, level: 'warn' | 'debug', message: string) {
-  return (log[level] as Mock).mock.calls.filter((call) => call[1] === message) as Array<[Record<string, unknown>, string]>;
+function callsWith(log: MockLogger, level: 'warn' | 'debug', message: string) {
+  return log[level].mock.calls.filter((call) => call[1] === message) as Array<[Record<string, unknown>, string]>;
 }
 
 describe('logIndexerSearchTrace', () => {

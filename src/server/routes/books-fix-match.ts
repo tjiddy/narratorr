@@ -123,6 +123,29 @@ async function refreshSidecarAndNotify(
   }
 }
 
+/**
+ * Release the add-ledger rows keyed on the identity the book has just stopped having (#2530).
+ *
+ * Runs after the `fixMatch` write commits, so a re-matched book the list still carries is re-added
+ * as wanted rather than silently refused forever. Only the `added` arm: a deletion tombstone is a
+ * deliberate operator act and re-matching one book must not un-refuse it. A failure is contained —
+ * the metadata fix landed, and a stale ledger row is not worth a 500.
+ */
+async function releaseAddLedger(
+  deps: BookRouteDeps,
+  identity: { title: string; asin: string | null; authorName: string | null },
+  bookId: number,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  if (!deps.importListExclusionService) return;
+  try {
+    const removed = await deps.importListExclusionService.removeAdded(identity);
+    if (removed > 0) log.info({ id: bookId, removed }, 'Fix Match: released import list add-ledger rows');
+  } catch (error: unknown) {
+    log.warn({ id: bookId, error: serializeError(error) }, 'Fix Match: failed to release the import list add-ledger rows');
+  }
+}
+
 export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps) {
   const metadataService = deps.metadataService;
   app.post<{ Params: IdParam; Body: FixMatchRequest }>(
@@ -163,6 +186,8 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
           reason: { oldAsin, newAsin: meta.asin ?? null, oldTitle, newTitle: meta.title },
         }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record metadata_fixed event'));
       }
+
+      await releaseAddLedger(deps, { title: oldTitle, asin: oldAsin, authorName: sourceBook.authors[0]?.name ?? null }, id, request.log);
 
       const { retagged } = await runPostCommitRenameRetag(deps, id, !!updated.path, body, request.log);
       await refreshSidecarAndNotify(deps, id, updated, body, retagged, request.log);

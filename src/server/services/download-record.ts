@@ -70,6 +70,9 @@ export async function insertDownloadRecordOrCompensate(
   try {
     rows = await insertDownloadRecord(db, log, params, ctx);
   } catch (insertError: unknown) {
+    // Deliberately untrimmed, unlike insertDownloadRecord's #2489 guard: a blank id here takes the
+    // compensation arm whose blank-input refusal is pinned by blank-external-id.integration.test.ts
+    // (#2485), and the adapter is the right place to refuse an id it never issued.
     if (ctx.externalId) await compensateOrphanedDownload(log, getAdapter, ctx.clientId, ctx.externalId);
     if (ctx.staged) await discardStagedHandoff(log, ctx.staged);
     throw insertError;
@@ -150,7 +153,11 @@ export async function insertDownloadRecord(
   params: InsertDownloadRecordParams,
   ctx: InsertDownloadRecordCtx,
 ): Promise<{ id: number }[]> {
-  const isHandoff = !ctx.externalId;
+  // Trim before every decision below: a whitespace-only id from a client API would otherwise pass
+  // each reader's falsy guard while matching nothing in the client — the un-cancellable ghost
+  // download #2485 hardened qBittorrent against, blocked here at the only write site (#2489).
+  const externalId = ctx.externalId?.trim() || null;
+  const isHandoff = !externalId;
   const clientStatus: 'completed' | 'downloading' = isHandoff ? 'completed' : 'downloading';
   const downloadProgress = isHandoff ? 1 : 0;
   const downloadCompletedAt = isHandoff ? new Date() : undefined;
@@ -175,7 +182,7 @@ export async function insertDownloadRecord(
       progress: downloadProgress,
       completedAt: downloadCompletedAt,
       // Empty external ids must become handoffs, never permanent pipeline blockers.
-      externalId: ctx.externalId || null,
+      externalId,
       bookStatusAtGrab: params.bookStatusAtGrab ?? null,
     })
     .returning();

@@ -650,10 +650,13 @@ describe('ManualImportAdapter attach path (DB-backed, #2435)', () => {
   // ── AC5 + AC24: the staged runner end to end ──────────────────────────────────────────────────
 
   describe('through the staged runner', () => {
-    async function stage(item: StagedImportItem): Promise<ImportJob> {
+    async function stage(
+      item: StagedImportItem,
+      submission: { source: 'manual'; mode: 'copy' | 'move' } | { source: 'library'; mode: null } = { source: 'manual', mode: 'copy' },
+    ): Promise<ImportJob> {
       const [sub] = await db.insert(importSubmissions).values({
         clientSubmissionId: `c-${Math.random()}`, payloadDigest: 'a'.repeat(64),
-        source: 'manual', mode: 'copy', expectedCount: 1, status: 'processing', receivedCount: 1,
+        ...submission, expectedCount: 1, status: 'processing', receivedCount: 1,
       }).returning();
       await db.insert(importSubmissionItems).values({
         submissionId: sub!.id, ordinal: 0, itemPayload: item, path: item.path, title: item.title, disposition: 'pending',
@@ -731,6 +734,30 @@ describe('ManualImportAdapter attach path (DB-backed, #2435)', () => {
       expect(row.coverUrl).toBe('https://example.com/c.jpg');
       const detail = await bookService.getById(bookId);
       expect(detail!.narrators.map((n) => n.name)).toEqual(['Incumbent Narrator']);
+    });
+
+    /**
+     * #2478 AC15 — the stated boundary of the worker-side containment guard, as a guard rail.
+     *
+     * A `source: 'library'` submission omits `mode` by design, so the runner enqueues a manual job
+     * with no mode and the adapter takes the pointer branch, which never calls `orchestrateCopy`.
+     * Pointer mode copies nothing and deletes nothing, so the flatten-and-delete hazard cannot
+     * arise there — and this reds if the guard is hoisted above the adapter's mode branch, which
+     * would silently impose copy/move containment on the pointer contract.
+     */
+    it('leaves a no-mode pointer job on an ancestor-of-library path completely unaffected', async () => {
+      // `dir` holds the library root: the exact shape copy/move now refuses.
+      const job = await stage(
+        { path: dir, title: 'Pointer Item', metadata: { title: 'Pointer Item', authors: [{ name: 'Pointer Author' }] } },
+        { source: 'library', mode: null },
+      );
+      expect(JSON.parse(job.metadata)).not.toHaveProperty('mode');
+
+      await adapter.process(job, adapterContext());
+
+      const row = (await db.select().from(books).where(eq(books.id, job.bookId!)))[0]!;
+      expect(row.status).toBe('imported');
+      expect(posix(row.path!)).toBe(posix(dir));
     });
   });
 });

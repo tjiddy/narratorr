@@ -1,4 +1,3 @@
-import { relative, isAbsolute } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -16,7 +15,7 @@ import {
   isAttachActiveJobConflict,
 } from '../services/attach-enqueue.js';
 import { admitAttachSource } from '../utils/attach-source.js';
-import { canonicalPath } from '../utils/path-identity.js';
+import { classifyImportSourceResolved } from '../utils/import-source-containment.js';
 
 const paramsSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -31,12 +30,8 @@ const bodySchema = z.object({
   mode: z.enum(['copy', 'move']),
 });
 
-/** Is the source inside the configured library root? Separators fold BEFORE resolving, or a
- * `..` segment spelled with backslashes survives on POSIX and escapes the check. */
-function isInsideLibrary(sourcePath: string, libraryRoot: string): boolean {
-  const rel = relative(canonicalPath(libraryRoot), canonicalPath(sourcePath));
-  return !rel.startsWith('..') && !isAbsolute(rel);
-}
+/** Both the pre-check and the lost-race catch answer this; the operator reads it, so they must agree. */
+const ALREADY_IMPORTING = 'An import is already in progress for this book';
 
 async function hasActiveJob(db: DbOrTx, bookId: number): Promise<boolean> {
   const [row] = await db
@@ -81,34 +76,34 @@ export async function bookImportFilesRoute(
       // at once answers deterministically. Every refusal below leaves status and path untouched.
       const book = await deps.bookService.getById(id);
       if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
+        return reply.status(404).send({ error: 'Book not found', code: 'book_not_found' });
       }
       if (bookHoldsFile(book.path)) {
-        return reply.status(409).send({ error: 'book_has_file', message: 'This book already has a library folder' });
+        return reply.status(409).send({ error: 'This book already has a library folder', code: 'book_has_file' });
       }
       if (!isAttachableStatus(book.status)) {
         return reply.status(409).send({
-          error: 'status_not_attachable',
           // An active acquisition owns the book; an `import_jobs` row is a SEPARATE condition, and
           // a `downloading` book need not have one at all — which is how it would otherwise slip through.
-          message: `A book with status "${book.status}" cannot receive a manually-obtained file`,
+          error: `A book with status "${book.status}" cannot receive a manually-obtained file`,
+          code: 'status_not_attachable',
         });
       }
       if (await hasActiveJob(deps.db, id)) {
-        return reply.status(409).send({ error: 'already_importing', message: 'An import is already in progress for this book' });
+        return reply.status(409).send({ error: ALREADY_IMPORTING, code: 'already_importing' });
       }
 
+      // Ahead of admission on purpose (#2478): `admitAttachSource('/')` would recurse the whole
+      // filesystem looking for one audio file before anything refused it.
       const librarySettings = await deps.settingsService.get('library');
-      if (librarySettings.path && isInsideLibrary(sourcePath, librarySettings.path)) {
-        return reply.status(400).send({
-          error: 'source_inside_library',
-          message: 'Source path is inside the library root — it is already managed by the library',
-        });
+      const containment = await classifyImportSourceResolved(sourcePath, librarySettings.path);
+      if (!containment.admissible) {
+        return reply.status(400).send({ error: containment.message, code: containment.reason });
       }
 
       const admission = await admitAttachSource(sourcePath);
       if (!admission.ok) {
-        return reply.status(400).send({ error: 'source_invalid', message: admission.reason });
+        return reply.status(400).send({ error: admission.reason, code: 'source_invalid' });
       }
 
       const payload: ManualImportJobPayload = { path: sourcePath, title: book.title, mode, attach: true };
@@ -126,7 +121,7 @@ export async function bookImportFilesRoute(
         // transaction leaves status and path exactly as found. Anything else propagates unchanged —
         // an over-broad catch that labelled an unrelated conflict `already_importing` would hide it.
         if (error instanceof AttachGuardMissed || isAttachActiveJobConflict(error)) {
-          return reply.status(409).send({ error: 'already_importing', message: 'An import is already in progress for this book' });
+          return reply.status(409).send({ error: ALREADY_IMPORTING, code: 'already_importing' });
         }
         throw error;
       }

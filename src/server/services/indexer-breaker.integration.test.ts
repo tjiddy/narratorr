@@ -14,7 +14,7 @@ import { runQueryLadder, buildQueryLadder } from './search-query-ladder.js';
 import { NOOP_SINK, type SearchEventSink } from './search-event-sink.js';
 import { INDEXER_BACKOFF_BASE_MS } from './indexer-failure-state.js';
 import { runRssJob } from '../jobs/rss.js';
-import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, type MockLogger } from '../__tests__/helpers.js';
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { indexerErrorEventSchema } from '@shared/schemas/search-stream.js';
@@ -48,8 +48,8 @@ function emptyResponse(titles: string[] = []) {
 }
 
 /** Pull the single consumer-threw warn line, so callers assert its fields rather than its count. */
-function expectConsumerThrewLog(harness: { log: Record<string, unknown> }): [Record<string, unknown>, string] {
-  const calls = (harness.log.warn as ReturnType<typeof vi.fn>).mock.calls
+function expectConsumerThrewLog(harness: { log: MockLogger }): [Record<string, unknown>, string] {
+  const calls = harness.log.warn.mock.calls
     .filter(([, message]) => message === 'Search event consumer threw — report dropped');
   expect(calls).toHaveLength(1);
   return calls[0] as [Record<string, unknown>, string];

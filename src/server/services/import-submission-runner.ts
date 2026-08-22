@@ -13,7 +13,7 @@ import type { BookImportService } from './book-import.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
-import { classifyConfirmItem, type AttachClassification } from './import-confirm-item.helpers.js';
+import { classifyConfirmItem, type AttachClassification, type SkipClassification } from './import-confirm-item.helpers.js';
 import { attachTransitionAndEnqueue, AttachGuardMissed, isAttachActiveJobConflict } from './attach-enqueue.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import { readOpfMetadata } from '../utils/opf-reader.js';
@@ -37,6 +37,21 @@ interface TerminalWrite {
   reason?: string;
   existingBookId?: number;
   existingTitle?: string;
+  /** #2091 snapshot of the incumbent's folder, taken at confirm time and never re-resolved. */
+  existingPath?: string;
+}
+
+/** Carry the classifier's whole verdict onto the row: the reason it chose plus every incumbent
+ * fact it could name. Each field stays omitted when absent so the write nulls it rather than
+ * inventing one — #2091's path snapshot in particular must never be fabricated. */
+function skipTerminalWrite(classification: SkipClassification): TerminalWrite {
+  return {
+    disposition: 'skipped',
+    reason: classification.reason,
+    ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
+    ...(classification.existingTitle !== undefined && { existingTitle: classification.existingTitle }),
+    ...(classification.existingPath !== undefined && { existingPath: classification.existingPath }),
+  };
 }
 
 /** Returned only to the winning completion CAS so notification dispatch happens post-commit. */
@@ -199,12 +214,7 @@ export class ImportSubmissionRunner {
 
       const classification = await classifyConfirmItem(item, this.bookService, this.log);
       if (classification !== 'proceed' && 'skip' in classification) {
-        await this.writeTerminal(sub, row, {
-          disposition: 'skipped',
-          reason: 'already-in-library',
-          ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
-          ...(classification.existingTitle !== undefined && { existingTitle: classification.existingTitle }),
-        });
+        await this.writeTerminal(sub, row, skipTerminalWrite(classification));
         return true;
       }
       if (classification !== 'proceed' && 'attach' in classification) {
@@ -366,6 +376,7 @@ export class ImportSubmissionRunner {
           reason: write.reason ?? null,
           existingBookId: write.existingBookId ?? null,
           existingTitle: write.existingTitle ?? null,
+          existingPath: write.existingPath ?? null,
           updatedAt: new Date(),
         })
         .where(and(eq(importSubmissionItems.id, row.id), eq(importSubmissionItems.disposition, 'pending')));

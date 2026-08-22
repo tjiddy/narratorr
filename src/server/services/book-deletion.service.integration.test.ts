@@ -235,6 +235,71 @@ describe('BookDeletionService — durable artifacts commit or roll back together
    * is what makes the bare "no exclusion row" assertions mean what AC5 guarantees: no row *this
    * call* would have inserted. The convergence case at the end is where a surviving row is correct.
    */
+  describe('the add-ledger row the tombstone absorbs (#2530)', () => {
+    it('leaves exactly one row, of kind deleted, for a book the list had recorded', async () => {
+      const id = await seed({ title: 'The Reckoning', asin: 'B0AAA11111' });
+      await exclusions.recordAdded(
+        { title: 'The Reckoning', asin: 'B0AAA11111', authorName: 'Jane Doe' },
+        { importListId: listId, importListName: 'NYT Bestsellers' },
+      );
+
+      await service.deleteBook(id, { deleteFiles: false });
+
+      // Two rows would make the undo page lie: removing the visible one leaves the other refusing.
+      const rows = await exclusionRows();
+      expect(rows.map((r) => r.kind)).toEqual(['deleted']);
+    });
+
+    it('removes nothing and writes nothing for a book whose list provenance was already nulled', async () => {
+      const id = await seed({ title: 'The Reckoning', fromList: false });
+      await exclusions.recordAdded({ title: 'The Reckoning', authorName: 'Jane Doe' }, { importListId: null, importListName: null });
+
+      await service.deleteBook(id, { deleteFiles: false });
+
+      const rows = await exclusionRows();
+      expect(rows.map((r) => r.kind)).toEqual(['added']);
+    });
+
+    it('leaves an unrelated added row alone', async () => {
+      const id = await seed({ title: 'The Reckoning' });
+      await exclusions.recordAdded({ title: 'A Different Book', authorName: 'John Roe' }, { importListId: listId, importListName: 'NYT Bestsellers' });
+
+      await service.deleteBook(id, { deleteFiles: false });
+
+      const rows = await exclusionRows();
+      expect(rows.map((r) => r.title).sort()).toEqual(['A Different Book', 'The Reckoning']);
+    });
+
+    it('reports the release only after the transaction commits', async () => {
+      const id = await seed({ title: 'The Reckoning' });
+      await exclusions.recordAdded({ title: 'The Reckoning', authorName: 'Jane Doe' }, { importListId: listId, importListName: 'NYT Bestsellers' });
+
+      await service.deleteBook(id, { deleteFiles: false });
+
+      expect(log.info).toHaveBeenCalledWith(
+        { bookId: id, removed: 1 },
+        'Released import list add-ledger rows for deleted book',
+      );
+    });
+
+    it('rolls the release back with the rest of the transaction', async () => {
+      // No mock can observe this: it records that a DELETE was issued, not whether it survived.
+      const id = await seed({ title: 'The Reckoning' });
+      const { row } = await exclusions.recordAdded(
+        { title: 'The Reckoning', authorName: 'Jane Doe' },
+        { importListId: listId, importListName: 'NYT Bestsellers' },
+      );
+      failRowDelete();
+
+      await expect(service.deleteBook(id, { deleteFiles: false })).rejects.toThrow('books table locked');
+
+      const rows = await exclusionRows();
+      expect(rows.map((r) => r.id)).toEqual([row.id]);
+      expect(rows[0]!.kind).toBe('added');
+      expect(await bookRow(id)).not.toBeNull();
+    });
+  });
+
   describe('rollback — a failed deleteBook strands nothing it created', () => {
     it('rolls back an exclusion-write rejection: no exclusion, no event, no cancel, book present', async () => {
       const id = await seed({ title: 'The Reckoning' });
@@ -407,6 +472,52 @@ describe('BookDeletionService — durable artifacts commit or roll back together
 
       expect(result).toEqual({ deleted: 1, failed: 0 });
       expect(cleanCoverCache).toHaveBeenCalledWith(id, '/test-config', expect.anything());
+    });
+  });
+
+  /**
+   * Persistence, not issuance: the reporting tail runs after the transaction has committed, so the
+   * proof that a throw there is harmless is that every durable artifact is still on disk afterwards.
+   */
+  describe('a throwing post-commit reporter leaves the durable half intact (#2536)', () => {
+    it('commits the row delete, the deleted event and the tombstone when the event reporter throws', async () => {
+      const id = await seed({ title: 'The Reckoning', asin: 'B0AAA11111' });
+      vi.spyOn(eventHistory, 'logRecorded').mockImplementation(() => { throw new Error('logger wedged'); });
+
+      const result = await service.deleteBook(id, { deleteFiles: false });
+
+      expect(result).toMatchObject({ outcome: 'deleted' });
+      expect(await bookRow(id)).toBeNull();
+      const events = await deletedEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ bookId: null, bookTitle: 'The Reckoning' });
+      expect((await exclusionRows()).map((r) => r.kind)).toEqual(['deleted']);
+    });
+
+    it('commits the same three artifacts when the exclusion reporter throws', async () => {
+      const id = await seed({ title: 'The Reckoning', asin: 'B0AAA11111' });
+      vi.spyOn(exclusions, 'logRecorded').mockImplementation(() => { throw new Error('logger wedged'); });
+
+      const result = await service.deleteBook(id, { deleteFiles: false });
+
+      expect(result).toMatchObject({ outcome: 'deleted' });
+      expect(await bookRow(id)).toBeNull();
+      expect(await deletedEvents()).toHaveLength(1);
+      expect((await exclusionRows()).map((r) => r.kind)).toEqual(['deleted']);
+    });
+
+    it('sweeps every book and counts none failed when the event reporter throws throughout', async () => {
+      const first = await seed({ title: 'First Book' });
+      const second = await seed({ title: 'Second Book', author: 'Ada Lovelace' });
+      vi.spyOn(eventHistory, 'logRecorded').mockImplementation(() => { throw new Error('logger wedged'); });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 2, failed: 0 });
+      expect(await bookRow(first)).toBeNull();
+      expect(await bookRow(second)).toBeNull();
+      expect(await db.select().from(books)).toHaveLength(0);
+      expect(log.error).not.toHaveBeenCalledWith(expect.anything(), 'Failed to delete missing book');
     });
   });
 

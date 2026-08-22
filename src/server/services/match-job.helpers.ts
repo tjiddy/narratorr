@@ -19,6 +19,12 @@ import { formatDurationSeconds } from '@shared/format-duration.js';
 export const RECORDING_REVIEW_REASON =
   'Possible different recording of a book you already own — review before importing';
 
+/** #2091: reaching this means the incumbent holds a file, which is exactly `path` being non-blank
+ * — the guard satisfies the type without letting an omitted field become the string "null". */
+function incumbentPathField(path: string | null): { existingPath?: string } {
+  return path != null ? { existingPath: path } : {};
+}
+
 /** Annotate a resolved match from the three-way recording check. Review remains display-only;
  * different recordings are flagged only with an incumbent, and lookup failure is non-fatal. */
 export async function applyLibraryDuplicate(
@@ -53,7 +59,14 @@ export async function applyLibraryDuplicate(
         { path: result.path, existingBookId: decision.incumbent.id, title: result.bestMatch.title },
         'Post-match library duplicate detected (same recording)',
       );
-      return { ...result, isDuplicate: true, existingBookId: decision.incumbent.id, duplicateReason: 'slug', recordingVerdict: 'same-recording' };
+      return {
+        ...result,
+        isDuplicate: true,
+        existingBookId: decision.incumbent.id,
+        duplicateReason: 'slug',
+        ...incumbentPathField(decision.incumbent.path),
+        recordingVerdict: 'same-recording',
+      };
     }
     if (decision.kind === 'review') {
       log.debug(

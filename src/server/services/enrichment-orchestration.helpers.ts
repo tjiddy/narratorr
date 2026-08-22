@@ -18,13 +18,13 @@ import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { resolveImportSeries } from './resolve-import-series.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
+import { resolveGenreWrite, type GenreMarkerFields } from '../utils/genre-write-plan.js';
 import type { ClearableBookField } from '@shared/schemas/book.js';
 
 export interface EnrichmentBookInput {
   narrators: Array<{ name: string }> | null;
   duration: number | null;
   coverUrl: string | null;
-  existingGenres: string[] | null;
   /** Absent keeps existing narrator semantics. */
   narratorSource?: NarratorSource | undefined;
 }
@@ -171,6 +171,7 @@ async function applyEnrichmentData(
     // #2435 AC28: the projection covers every field this transaction writes, so each guard reads
     // the LIVE row — the sole gate. A caller's pre-fetch snapshot cannot be one: it predates the
     // audio scan and the provider round-trip, and an operator can populate any column meanwhile.
+    // `title` and `seriesName` are read-only additions feeding the #2535 marker inference.
     const rows = await tx
       .select({
         asin: books.asin,
@@ -179,6 +180,8 @@ async function applyEnrichmentData(
         subtitle: books.subtitle,
         publisher: books.publisher,
         genres: books.genres,
+        title: books.title,
+        seriesName: books.seriesName,
       })
       .from(books)
       .where(eq(books.id, bookId))
@@ -207,7 +210,11 @@ async function applyEnrichmentData(
       updates.publisher = data.publisher;
     }
     await tx.update(books).set(updates).where(eq(books.id, bookId));
-    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx, row.genres);
+    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx, {
+      liveGenres: row.genres,
+      // The effective post-update text: a subtitle this pass just filled is what the marker sits in.
+      markers: { title: row.title, subtitle: updates.subtitle ?? row.subtitle, seriesName: row.seriesName },
+    });
     return { applied: true, genresWritten };
   });
 
@@ -236,16 +243,21 @@ async function applyEnrichmentArrayFields(
   deps: Pick<EnrichmentDeps, 'bookService'>,
   cleared: ReadonlySet<ClearableBookField>,
   tx: DbOrTx,
-  liveGenres: string[] | null,
+  genreContext: { liveGenres: string[] | null; markers: GenreMarkerFields },
 ): Promise<string[] | null> {
+  // Deliberately NOT per-name isolated, unlike the sweep's insertNarratorsIfEmpty (#2479): a
+  // findOrCreateNarrator throw here rolls back the whole enrichment transaction, and the sweep
+  // re-derives everything on its next pass. Isolating would need the jobs-layer helper across the
+  // services/jobs boundary for a window that requires a non-race DB insert failure to open (#2514).
   if (!opts.existingNarrator && data.narrators?.length && !(await rowHasNarrators(tx, bookId))) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
-  if (data.genres?.length && !liveGenres?.length && !cleared.has('genres')) {
-    await deps.bookService.update(bookId, { genres: data.genres }, { tx });
-    return data.genres;
-  }
-  return null;
+  if (cleared.has('genres')) return null;
+  // One combined value, so a provider fill and a marker inference cost one update, not two.
+  const { genres } = resolveGenreWrite(data.genres, genreContext.liveGenres, genreContext.markers);
+  if (!genres) return null;
+  await deps.bookService.update(bookId, { genres }, { tx });
+  return genres;
 }
 
 export interface ImportConfirmItem {
@@ -265,7 +277,6 @@ export function buildEnrichmentBookInput(
     narrators?: Array<{ name: string }> | null;
     duration?: number | null;
     coverUrl?: string | null;
-    genres?: string[] | null;
     narratorSource?: NarratorSource | undefined;
   },
 ): EnrichmentBookInput {
@@ -273,7 +284,6 @@ export function buildEnrichmentBookInput(
     narrators: book.narrators ?? null,
     duration: book.duration ?? null,
     coverUrl: book.coverUrl ?? null,
-    existingGenres: book.genres ?? null,
     ...(book.narratorSource !== undefined && { narratorSource: book.narratorSource }),
   };
 }

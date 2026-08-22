@@ -249,10 +249,12 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   /**
-   * Size, seeders and leechers are deliberately absent from every row: ABB's search markup carries
-   * none of them, and the repo's own row fixture is the evidence. Faking a seeder count the way
-   * Jackett does would be worse than absence — `search-pipeline.ts` treats unknown as "keep", so an
-   * absent count survives every `minSeeders`, while a faked `1` is dropped at `minSeeders >= 2`.
+   * Seeders and leechers are deliberately absent from every row: ABB's search markup carries
+   * neither, and the repo's own row fixture is the evidence. Size is NOT in that set — a post whose
+   * info lines carry `File Size:` yields one through `readAbbMetadata`, so absence there is per-row
+   * and not a property of the markup. Faking a seeder count the way Jackett does would be worse
+   * than absence — `search-pipeline.ts` treats unknown as "keep", so an absent count survives every
+   * `minSeeders`, while a faked `1` is dropped at `minSeeders >= 2`.
    */
   private parseSearchPage(html: string): { results: SearchResult[]; observed: number; droppedEmptyTitle: number; droppedOther: number; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(html);

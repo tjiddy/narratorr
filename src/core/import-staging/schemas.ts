@@ -205,6 +205,8 @@ export const stagedItemResultDtoSchema = z.discriminatedUnion('disposition', [
       reason: importSkipReasonSchema,
       existingBookId: z.number().int().optional(),
       existingTitle: z.string().optional(),
+      /** #2091 snapshot of the incumbent's folder; survives the incumbent's deletion. */
+      existingPath: z.string().optional(),
     })
     .strict(),
   z

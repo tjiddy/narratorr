@@ -56,6 +56,9 @@ export const searchResultSchema = z.object({
   isFreeleech: z.boolean().optional(),
   isVipOnly: z.boolean().optional(),
   format: z.string().optional(),
+  // Kilobits per second. Unbounded above on purpose — a lossless listing legitimately reports
+  // 1411 — so `bitrateField` (32-512, which bounds OUR encoder's output) must not be reused here.
+  bitrateKbps: z.number().int().positive().optional(),
   // A contract we own, so .optional() is correct here; the tolerant .nullish() belongs to the
   // MAM response schema. Both halves are required together — a partial pair has no meaning.
   unsatisfied: z.object({ count: z.number(), limit: z.number() }).optional(),
@@ -99,6 +102,10 @@ export const searchResponseSchema = z.object({
   relaxedQuery: z.string().optional(),
   // Present only when the quality gates actually removed something; a contract we own, so .optional().
   filteredOut: searchDropSummarySchema.optional(),
+  // Present only when the run was torn down at its deadline, so an outage cannot read as an
+  // answered zero. A flag rather than a sixth event: an older client ignores an unknown event name
+  // entirely, but degrades gracefully on an unknown field of a payload it already validates.
+  timedOut: z.boolean().optional(),
 });
 
 export type SearchStartEvent = z.infer<typeof searchStartEventSchema>;

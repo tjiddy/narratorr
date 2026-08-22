@@ -1,5 +1,4 @@
 import { eq, and, isNotNull } from 'drizzle-orm';
-import { normalize } from 'node:path';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads } from '@db/schema.js';
@@ -16,7 +15,9 @@ import type { RemotePathMappingService } from './remote-path-mapping.service.js'
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import type { DownloadStatus } from '@shared/schemas/activity.js';
+import { canonicalPath } from '../utils/path-identity.js';
 import { resolveSavePath } from '../utils/download-path.js';
+import { classifyImportSourceResolved } from '../utils/import-source-containment.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '@core/utils/naming.js';
 import {
@@ -69,7 +70,6 @@ export interface ImportContext {
   bookStatusAtGrab: BookStatus | null;
   bookPath: string | null;
   authorName: string | null;
-  narratorStr: string | null;
   book: BookWithAuthor;
   infoHash: string | null;
   guid: string | null;
@@ -93,8 +93,6 @@ export class ImportService {
     const book = await this.bookService!.getById(download.bookId);
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
-    const narratorNames = book.narrators.map(n => n.name);
-    const narratorStr = narratorNames.length > 0 ? narratorNames.join(', ') : null;
 
     return {
       downloadId,
@@ -106,7 +104,6 @@ export class ImportService {
       bookStatusAtGrab: download.bookStatusAtGrab ?? null,
       bookPath: book.path,
       authorName,
-      narratorStr,
       book,
       infoHash: download.infoHash ?? null,
       guid: download.guid ?? null,
@@ -175,12 +172,44 @@ export class ImportService {
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
       this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath }, 'Resolved save path');
+
+      /**
+       * #2538 — the third adoption of the #2478 rule, on the MAPPED path `validateSource` and
+       * `copyToLibrary` actually consume. A path-mapping typo that lands the client's save path at or
+       * above the library root otherwise gets recursively copied into a staging dir inside the
+       * library and then flattened into a book folder.
+       *
+       * Position is load-bearing: `libraryRoot` and `targetPath` below are still `undefined` here, and
+       * `handleImportFailure` deletes managed files under `targetPath` whenever both are set and
+       * `protectTarget` is false. Refusing from here reaches `revertAndRethrow` having done zero
+       * filesystem work; a guard a few lines lower would make a REFUSAL delete whatever already
+       * occupies the computed target.
+       *
+       * A plain `Error`, never `ContentFailureError`: an operator misconfiguration is an environment
+       * fault, so `dispatchFailureSideEffects` must not blacklist the release and re-search — that
+       * would punish good content and spin on a fault only the operator can fix.
+       */
+      const containment = await classifyImportSourceResolved(savePath, librarySettings.path);
+      if (!containment.admissible) {
+        // The only record naming the paths: the refusal message is generic operator copy, and
+        // 'Resolved save path' above is debug-level — absent at the level a mapping typo is
+        // diagnosed at. `originalPath` identifies the pre-/post-mapping pair.
+        this.log.error(
+          { downloadId, bookId: book.id, originalPath, savePath, libraryRoot: librarySettings.path, reason: containment.reason },
+          'Refusing automatic import — source path fails library containment',
+        );
+        throw new Error(containment.message);
+      }
+
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions, book.editionLabel);
       // Same-path re-imports own existing audio and must never be blanket-removed on failure.
       // Compute before marker preflight so collision cleanup already has protection set.
-      protectTarget = book.path != null && normalize(targetPath) === normalize(book.path);
+      // `canonicalPath`, not a raw compare: pointer/adopt persists `books.path` verbatim, so the
+      // stored spelling can differ from the computed target by trailing separator or separator
+      // flavor — and this guard must agree with the claim lock, which keys on the same function.
+      protectTarget = book.path != null && canonicalPath(targetPath) === canonicalPath(book.path);
       // Check marker collision before deriving/clearing siblings; an adjacent backup must survive.
       await assertMarkerPathWritable(targetPath);
       // Dot-led scratch prevents concurrent library scans from ingesting partial copies.

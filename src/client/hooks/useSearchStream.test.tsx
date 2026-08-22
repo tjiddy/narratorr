@@ -242,6 +242,48 @@ describe('useSearchStream', () => {
     });
   });
 
+  // Same runtime guard again: an expiry disclosure must survive the Zod parse into state (#2568).
+  it('carries timedOut from the search-complete payload into state', async () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
+    act(() => {
+      result.current.actions.start();
+    });
+
+    act(() => {
+      MockEventSource.instances[0]!.emit('search-complete', {
+        results: [],
+        durationUnknown: true,
+        unsupportedResults: { count: 0, titles: [] },
+        timedOut: true,
+      });
+    });
+
+    expect(result.current.state.results?.timedOut).toBe(true);
+    expect(result.current.state.phase).toBe('results');
+    expect(result.current.state.error).toBeNull();
+  });
+
+  it('leaves timedOut off state when the payload omits it', async () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
+    act(() => {
+      result.current.actions.start();
+    });
+
+    act(() => {
+      MockEventSource.instances[0]!.emit('search-complete', {
+        results: [],
+        durationUnknown: false,
+        unsupportedResults: { count: 0, titles: [] },
+      });
+    });
+
+    expect(result.current.state.results).not.toHaveProperty('timedOut');
+  });
+
   it('leaves filteredOut undefined when the payload omits it', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
@@ -325,5 +326,215 @@ describe('DirectoryBrowserModal — selectableFiles (#2435)', () => {
     }
 
     expect(mockBrowse.mock.calls.map((c) => c[1])).toEqual([...order]);
+  });
+});
+
+/**
+ * #2478 AC16–AC18 — the opt-in gate. Without the prop the modal keeps today's
+ * "submits the directory when no file is chosen" contract, which the suite above already pins;
+ * under it, the confirm button stays disabled until the user says which thing they mean.
+ */
+describe('DirectoryBrowserModal — requireExplicitSelection (#2478)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBrowse.mockResolvedValue({ dirs: ['Disc 1'], parent: '/', files: ['book.m4b'] });
+  });
+
+  function renderGated(overrides?: Partial<typeof defaultProps>) {
+    return renderWithProviders(
+      <DirectoryBrowserModal {...defaultProps} {...overrides} selectableFiles requireExplicitSelection />,
+    );
+  }
+
+  const confirm = () => screen.getByRole('button', { name: 'Select' });
+  const useFolder = () => screen.getByRole('button', { name: 'Use this folder' });
+
+  it('keeps the confirm button disabled until something is explicitly chosen', async () => {
+    const onSelect = vi.fn();
+    renderGated({ onSelect });
+    await screen.findByText('book.m4b');
+
+    expect(confirm()).toBeDisabled();
+    await userEvent.click(confirm());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('enables on a file click and submits that file path', async () => {
+    const onSelect = vi.fn();
+    renderGated({ onSelect });
+
+    await userEvent.click(await screen.findByText('book.m4b'));
+    expect(confirm()).toBeEnabled();
+    await userEvent.click(confirm());
+
+    expect(onSelect).toHaveBeenCalledWith('/media/book.m4b');
+  });
+
+  it('enables on the folder affordance and submits the current directory', async () => {
+    const onSelect = vi.fn();
+    renderGated({ onSelect });
+    await screen.findByText('book.m4b');
+
+    await userEvent.click(useFolder());
+    expect(confirm()).toBeEnabled();
+    await userEvent.click(confirm());
+
+    expect(onSelect).toHaveBeenCalledWith('/media');
+  });
+
+  /**
+   * Enablement alone is not enough: a visually working toggle carrying no `aria-pressed` passes
+   * the two tests above while failing the accessibility half of AC17.
+   */
+  describe('the folder affordance reports its pressed state', () => {
+    it('reads false initially, true when chosen, and false again when toggled off', async () => {
+      renderGated();
+      await screen.findByText('book.m4b');
+
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      await userEvent.click(useFolder());
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'true');
+      await userEvent.click(useFolder());
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      expect(confirm()).toBeDisabled();
+    });
+
+    it('reads false again after navigating into a directory', async () => {
+      renderGated();
+      await screen.findByText('book.m4b');
+      await userEvent.click(useFolder());
+
+      await userEvent.click(screen.getByText('Disc 1'));
+
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      expect(confirm()).toBeDisabled();
+    });
+
+    it('reads false again after a breadcrumb click', async () => {
+      renderGated();
+      await screen.findByText('book.m4b');
+      await userEvent.click(useFolder());
+
+      await userEvent.click(screen.getByRole('button', { name: '/' }));
+
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      expect(confirm()).toBeDisabled();
+    });
+
+    it('reads false again after a close and reopen', async () => {
+      function Harness() {
+        const [open, setOpen] = useState(false);
+        return (
+          <>
+            <button type="button" onClick={() => setOpen(true)}>open browser</button>
+            <DirectoryBrowserModal
+              {...defaultProps}
+              selectableFiles
+              requireExplicitSelection
+              isOpen={open}
+              onClose={() => setOpen(false)}
+            />
+          </>
+        );
+      }
+      renderWithProviders(<Harness />);
+
+      await userEvent.click(screen.getByRole('button', { name: 'open browser' }));
+      await screen.findByText('book.m4b');
+      await userEvent.click(useFolder());
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      await userEvent.click(screen.getByRole('button', { name: 'open browser' }));
+      await screen.findByText('book.m4b');
+
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      expect(confirm()).toBeDisabled();
+    });
+  });
+
+  it('re-disables after a file selection when the user navigates into a directory', async () => {
+    renderGated();
+
+    await userEvent.click(await screen.findByText('book.m4b'));
+    expect(confirm()).toBeEnabled();
+    await userEvent.click(screen.getByText('Disc 1'));
+
+    expect(confirm()).toBeDisabled();
+  });
+
+  it('re-disables after a file selection when the user clicks a breadcrumb', async () => {
+    renderGated();
+
+    await userEvent.click(await screen.findByText('book.m4b'));
+    await userEvent.click(screen.getByRole('button', { name: '/' }));
+
+    expect(confirm()).toBeDisabled();
+  });
+
+  // Today's file toggle: clicking the selected file again clears it.
+  it('re-disables when the already-selected file is clicked a second time', async () => {
+    renderGated();
+
+    await userEvent.click(await screen.findByText('book.m4b'));
+    await userEvent.click(screen.getByText('book.m4b'));
+
+    expect(confirm()).toBeDisabled();
+  });
+
+  /**
+   * The two answers are mutually exclusive, and `handleSelect` prioritizes `selectedFile` — so a
+   * dropped clear in either direction leaves a stale choice both visibly active and, in the
+   * file → folder direction, silently authoritative over the path actually submitted. Every other
+   * test in this suite starts from a clean slate, so neither transition is observed anywhere else.
+   */
+  describe('the two choices are mutually exclusive', () => {
+    const fileButton = () => screen.getByRole('button', { name: 'book.m4b' });
+
+    it('choosing a file releases an already-chosen folder and submits the file', async () => {
+      const onSelect = vi.fn();
+      renderGated({ onSelect });
+      await screen.findByText('book.m4b');
+      await userEvent.click(useFolder());
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'true');
+
+      await userEvent.click(fileButton());
+
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      expect(fileButton()).toHaveAttribute('aria-pressed', 'true');
+      await userEvent.click(confirm());
+      expect(onSelect).toHaveBeenCalledWith('/media/book.m4b');
+    });
+
+    it('choosing the folder releases an already-selected file and submits the directory', async () => {
+      const onSelect = vi.fn();
+      renderGated({ onSelect });
+
+      await userEvent.click(await screen.findByText('book.m4b'));
+      expect(fileButton()).toHaveAttribute('aria-pressed', 'true');
+
+      await userEvent.click(useFolder());
+
+      expect(fileButton()).toHaveAttribute('aria-pressed', 'false');
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'true');
+      await userEvent.click(confirm());
+      expect(onSelect).toHaveBeenCalledWith('/media');
+    });
+  });
+
+  it('composes with selectDisabled — an explicit choice cannot re-enable a pending confirm', async () => {
+    renderGated({ selectDisabled: true } as Partial<typeof defaultProps>);
+    await screen.findByText('book.m4b');
+
+    await userEvent.click(useFolder());
+
+    expect(confirm()).toBeDisabled();
+  });
+
+  it('renders no folder affordance at all when the prop is omitted', async () => {
+    renderWithProviders(<DirectoryBrowserModal {...defaultProps} selectableFiles />);
+    await screen.findByText('book.m4b');
+
+    expect(screen.queryByRole('button', { name: 'Use this folder' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Select' })).toBeEnabled();
   });
 });

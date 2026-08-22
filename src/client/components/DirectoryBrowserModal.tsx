@@ -22,6 +22,9 @@ interface DirectoryBrowserModalProps {
   /** #2435 AC20: also list supported audio files and let one be chosen. Existing callers omit it
    * and keep today's directory-only behaviour with no prop change. */
   selectableFiles?: boolean | undefined;
+  /** #2478: hold the confirm button until the user clicks a file or the "use this folder"
+   * affordance. Omitted, the modal keeps submitting the current directory unprompted. */
+  requireExplicitSelection?: boolean | undefined;
   title?: string | undefined;
   subtitle?: string | undefined;
   /** Rendered beside the path in the footer; used for the copy/move choice. */
@@ -138,10 +141,27 @@ function BrowserEntries({ data, isLoading, error, selectedFile, onDirClick, onFi
   );
 }
 
+/** The second way to answer "which thing do you mean" — the first is clicking an audio file. */
+function UseThisFolderButton({ chosen, onToggle }: { chosen: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={chosen}
+      onClick={onToggle}
+      className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors focus-ring ${
+        chosen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      Use this folder
+    </button>
+  );
+}
+
 // Mounting this inner component resets initialPath state without a syncing effect.
-function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFiles, title, subtitle, footerExtra, selectLabel, selectDisabled }: DirectoryBrowserModalProps) {
+function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFiles, requireExplicitSelection, title, subtitle, footerExtra, selectLabel, selectDisabled }: DirectoryBrowserModalProps) {
   const [currentPath, setCurrentPath] = useState(initialPath || '/');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [folderChosen, setFolderChosen] = useState(false);
 
   const capability = selectableFiles ? 'audio' : 'legacy';
   const { data, isLoading, error } = useQuery({
@@ -161,17 +181,28 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFil
     onSelect(selectedFile ? joinPath(selectedFile) : currentPath);
   }, [currentPath, joinPath, onSelect, selectedFile]);
 
+  // Navigating away invalidates BOTH answers: the file is no longer listed, and "this folder" now
+  // names a different one.
   const handleNavigate = useCallback((path: string) => {
     setSelectedFile(null);
+    setFolderChosen(false);
     setCurrentPath(path);
   }, []);
 
   const handleDirClick = useCallback((dirName: string) => {
     setSelectedFile(null);
+    setFolderChosen(false);
     setCurrentPath(joinPath(dirName));
   }, [joinPath]);
 
+  // The two answers are mutually exclusive, so the footer preview and the submitted path agree.
+  const handleFileClick = useCallback((file: string) => {
+    setFolderChosen(false);
+    setSelectedFile((current) => (current === file ? null : file));
+  }, []);
+
   const breadcrumbs = parseBreadcrumbs(currentPath);
+  const nothingChosen = requireExplicitSelection === true && selectedFile === null && !folderChosen;
 
   return (
     <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[80vh]">
@@ -227,7 +258,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFil
           error={error}
           selectedFile={selectedFile}
           onDirClick={handleDirClick}
-          onFileClick={(file) => setSelectedFile(selectedFile === file ? null : file)}
+          onFileClick={handleFileClick}
         />
 
         <div className="border-t border-white/5" />
@@ -235,6 +266,14 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFil
         <div className="px-6 py-4 flex items-center justify-between shrink-0">
           <div className="min-w-0 mr-4">
             {footerExtra}
+            {requireExplicitSelection === true && (
+              <div className="mb-1.5">
+                <UseThisFolderButton
+                  chosen={folderChosen}
+                  onToggle={() => { setSelectedFile(null); setFolderChosen((chosen) => !chosen); }}
+                />
+              </div>
+            )}
             <p className="text-xs text-muted-foreground/50 truncate font-mono" title={selectedFile ? joinPath(selectedFile) : currentPath}>
               {selectedFile ? joinPath(selectedFile) : currentPath}
             </p>
@@ -250,7 +289,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFil
             <button
               type="button"
               onClick={handleSelect}
-              disabled={selectDisabled}
+              disabled={selectDisabled === true || nothingChosen}
               className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring disabled:opacity-50 disabled:pointer-events-none"
             >
               {selectLabel ?? 'Select'}

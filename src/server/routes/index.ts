@@ -28,6 +28,7 @@ import {
   ReferenceReadService,
   CompanionEbookReconciler,
 } from '../services';
+import { backfillImportListAddLedger } from '../services/import-list-add-ledger-backfill.js';
 import { ImportService } from '../services/import.service.js';
 import { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -167,6 +168,10 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Run before any processing read; >8 otherwise triggers whole-category parse fallback.
   await settings.migrateMaxConcurrentProcessingDefaults();
 
+  // Awaited here, with the settings migrations, rather than in `runStartupRecovery`: that is
+  // fire-and-forget AFTER `startJobs` arms the cron, so a backfill there races the first sync.
+  await backfillImportListAddLedger(db, importListExclusion, log);
+
   const { resolveProxyIp } = await import('@core/indexers/proxy.js');
   const { probeFfmpeg } = await import('@core/utils/audio-processor.js');
   const { probeMutagen } = await import('@core/utils/mutagen-resolver.js');
@@ -233,6 +238,7 @@ const routeRegistry: RouteFactory[] = [
     metadataService: s.metadata,
     companionEbook: s.companionEbook,
     connectorService: s.connector,
+    importListExclusionService: s.importListExclusion,
   }),
   (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
   (app, s) => bookPreviewRoute(app, s.book),

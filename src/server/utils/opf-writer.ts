@@ -1,4 +1,5 @@
 import { extname, join, resolve } from 'node:path';
+import { canonicalPath } from './path-identity.js';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   OPF_FILENAME, OPF_BACKUP_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker,
@@ -164,7 +165,9 @@ function runSidecarWriteUnderFileKey(args: WriteOpfForImportArgs): Promise<OpfWr
 function ownsFolder(book: BookWithAuthor, bookFolder: string): boolean {
   // `books.path` is stored POSIX-normalized while a caller's value can carry platform separators
   // or a trailing slash; a raw string comparison would silently disable sidecar writes everywhere.
-  return book.path != null && resolve(book.path) === resolve(bookFolder);
+  // canonicalPath rather than bare resolve so a backslash spelling matches its POSIX twin (#2469) —
+  // the same folder-identity function the sibling tag-embed guard uses.
+  return book.path != null && canonicalPath(book.path) === canonicalPath(bookFolder);
 }
 
 async function runSidecarWrite(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {

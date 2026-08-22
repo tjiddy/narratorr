@@ -26,7 +26,7 @@ export async function retryImportRoute(
     async (request, reply) => {
       const result = await bookImportService.retryImport(request.params.id, nudgeImportWorker);
       if ('error' in result) {
-        return reply.status(result.status).send({ error: result.error });
+        return reply.status(result.status).send({ error: result.error, code: result.code });
       }
       return reply.status(202).send({ jobId: result.jobId });
     },

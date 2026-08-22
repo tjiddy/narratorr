@@ -196,6 +196,32 @@ describe('searchResponseSchema — filteredOut (#2325)', () => {
   });
 });
 
+describe('searchResponseSchema — timedOut (#2568)', () => {
+  const base = { results: [], durationUnknown: true, unsupportedResults: { count: 0, titles: [] } };
+
+  it('accepts and round-trips timedOut: true', () => {
+    const result = searchResponseSchema.safeParse({ ...base, timedOut: true });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.timedOut).toBe(true);
+  });
+
+  it('accepts a payload without the key and leaves it off the parsed output', () => {
+    const result = searchResponseSchema.safeParse(base);
+
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('timedOut');
+  });
+
+  it('rejects a null timedOut — the contract is .optional(), not .nullish()', () => {
+    expect(searchResponseSchema.safeParse({ ...base, timedOut: null }).success).toBe(false);
+  });
+
+  it.each([['true'], [1]])('rejects a non-boolean timedOut (%s)', (value) => {
+    expect(searchResponseSchema.safeParse({ ...base, timedOut: value }).success).toBe(false);
+  });
+});
+
 describe('searchResultSchema — rawSize (#2316)', () => {
   const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
 
@@ -214,6 +240,40 @@ describe('searchResultSchema — rawSize (#2316)', () => {
   it('rejects a non-string rawSize', () => {
     const result = searchResultSchema.safeParse({ ...base, rawSize: 1057803469 });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('searchResultSchema — bitrateKbps (#2504)', () => {
+  const base = { title: 'Jurassic Park', protocol: 'torrent', indexer: 'AudioBookBay' };
+
+  it('accepts and round-trips a kbps integer', () => {
+    const result = searchResultSchema.safeParse({ ...base, bitrateKbps: 64 });
+    expect(result.success).toBe(true);
+    expect(result.data?.bitrateKbps).toBe(64);
+  });
+
+  it('accepts a result without the key and leaves it off the parsed output', () => {
+    const result = searchResultSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('bitrateKbps');
+  });
+
+  // Deliberately unbounded above: a lossless listing reports 1411, which `bitrateField`'s 32-512
+  // encoder range would reject. This is the case that reds if someone "tidies" the two together.
+  it('accepts a lossless-scale value with no upper bound', () => {
+    const result = searchResultSchema.safeParse({ ...base, bitrateKbps: 1411 });
+    expect(result.success).toBe(true);
+    expect(result.data?.bitrateKbps).toBe(1411);
+  });
+
+  it.each<[string | number, string]>([
+    ['64 Kbps', 'a display string — what a formatting shortcut would send'],
+    [64.5, 'a fraction'],
+    [-64, 'a negative'],
+    [0, 'zero, the absence decision enforced at the wire'],
+    [NaN, 'NaN'],
+  ])('rejects %s — %s', (value) => {
+    expect(searchResultSchema.safeParse({ ...base, bitrateKbps: value }).success).toBe(false);
   });
 });
 

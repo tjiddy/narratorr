@@ -6,7 +6,8 @@ import {
   type MemberState,
   type SeriesMemberRow,
 } from './series-card-members.js';
-import type { LibraryBookSummary } from './series-title-match.js';
+import type { MemberPoolBook } from './series-card-members.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 
 let nextRowId = 1;
 
@@ -27,8 +28,8 @@ function hardcoverRow(overrides: Partial<SeriesMemberRow> & { title: string; pos
   } as SeriesMemberRow;
 }
 
-function book(id: number, title: string, seriesPosition: number | null): LibraryBookSummary {
-  return { id, title, seriesPosition };
+function book(id: number, title: string, seriesPosition: number | null, status: BookStatus = 'imported'): MemberPoolBook {
+  return { id, title, seriesPosition, status };
 }
 
 function state(partial: Partial<MemberState>): MemberState {
@@ -103,10 +104,93 @@ describe('buildMembersFromState — AC9a seriesPosition projection gate', () => 
     expect(spy).toHaveBeenCalled();
     for (const call of spy.mock.calls) {
       for (const candidate of call[1]) {
-        expect(Object.keys(candidate).sort()).toEqual(['id', 'seriesPosition', 'title']);
+        expect(candidate).toEqual(expect.objectContaining({ id: 580, title: 'Hunters of Dune', seriesPosition: 7 }));
+        // The tombstone travels beside the pool, never merged into a candidate.
+        expect(Object.keys(candidate)).not.toContain('positionCleared');
+        expect(Object.keys(candidate)).not.toContain('userClearedFields');
       }
     }
     spy.mockRestore();
+  });
+});
+
+describe('buildMembersFromState — libraryBucket projection (#2541)', () => {
+  const byStatus: [BookStatus, string][] = [
+    ['wanted', 'wanted'],
+    ['searching', 'downloading'],
+    ['downloading', 'downloading'],
+    ['importing', 'imported'],
+    ['imported', 'imported'],
+    ['failed', 'failed'],
+    ['missing', 'missing'],
+  ];
+
+  it.each(byStatus)('a Hardcover row matched to a %s book carries the %s bucket', (status, bucket) => {
+    const rows = [hardcoverRow({ title: 'Dune Messiah', position: 2 })];
+    const built = buildMembersFromState(state({ rows, pool: [book(11, 'Dune Messiah', 2, status)] }));
+
+    expect(built.members).toEqual([
+      expect.objectContaining({ title: 'Dune Messiah', inLibrary: true, libraryBookId: 11, libraryBucket: bucket }),
+    ]);
+  });
+
+  it('an unmatched Hardcover row carries a null bucket alongside the null book id', () => {
+    const rows = [hardcoverRow({ title: 'Children of Dune', position: 3 })];
+    const built = buildMembersFromState(state({ rows, pool: [] }));
+
+    expect(built.members).toEqual([
+      expect.objectContaining({ title: 'Children of Dune', inLibrary: false, libraryBookId: null, libraryBucket: null }),
+    ]);
+  });
+
+  it.each(byStatus)('a library-owned member card derives its bucket from the pool book (%s)', (status, bucket) => {
+    expect(libraryMemberCard(book(12, 'God Emperor of Dune', 4, status))).toEqual(
+      expect.objectContaining({ inLibrary: true, libraryBookId: 12, libraryBucket: bucket }),
+    );
+  });
+
+  it('holds the linked-state invariant across a mixed local / Hardcover / unclaimed state', () => {
+    const local = hardcoverRow({ title: 'Dune', position: null, source: 'local', bookId: 1 });
+    const rows = [
+      local,
+      hardcoverRow({ title: 'Dune Messiah', position: 2 }),
+      hardcoverRow({ title: 'Children of Dune', position: 3 }),
+    ];
+    const pool = [book(1, 'Dune', 1, 'imported'), book(2, 'Dune Messiah', 2, 'downloading'), book(3, 'Heretics of Dune', 5, 'wanted')];
+
+    const built = buildMembersFromState(state({ rows, pool }));
+
+    expect(built.members).toHaveLength(4);
+    for (const member of built.members) {
+      expect(member.libraryBucket !== null).toBe(member.inLibrary);
+      expect(member.libraryBookId !== null).toBe(member.inLibrary);
+    }
+    expect(built.members.map((m) => [m.title, m.libraryBucket])).toEqual([
+      ['Dune', 'imported'],
+      ['Dune Messiah', 'downloading'],
+      ['Children of Dune', null],
+      ['Heretics of Dune', 'wanted'],
+    ]);
+  });
+
+  it('gates position and bucket independently: a tombstoned match keeps its bucket', () => {
+    const rows = [hardcoverRow({ title: 'Hunters of Dune', position: 7 })];
+    const built = buildMembersFromState(state({
+      rows,
+      pool: [book(580, 'Hunters of Dune', 7, 'failed')],
+      positionClearedIds: new Set([580]),
+    }));
+
+    expect(built.members).toEqual([
+      expect.objectContaining({ position: null, libraryBookId: 580, libraryBucket: 'failed' }),
+    ]);
+  });
+
+  it('keeps the bucket out of ordering — two members differing only by bucket sort by title', () => {
+    const pool = [book(1, 'Zulu', 1, 'wanted'), book(2, 'Alpha', 1, 'imported')];
+    const built = buildMembersFromState(state({ pool }));
+
+    expect(built.members.map((m) => m.title)).toEqual(['Alpha', 'Zulu']);
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { delugeResolve, delugeStatusResult, delugeInvalidTorrentError } from '../__tests__/download-client-id-semantics.js';
 import { DelugeClient } from './deluge.js';
 import type { DownloadArtifact } from './types.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
@@ -54,6 +55,16 @@ function rpcHandler(methodHandlers: Record<string, (params: unknown[]) => unknow
 
 function loginHandler() {
   return rpcHandler({ 'auth.login': () => true });
+}
+
+/**
+ * `core.get_torrent_status` answers ONLY for the id the request named; its documented miss is an
+ * empty status dict, never the fixture (#2488 AC8). The pre-#2488 handler returned
+ * `mockTorrentStatus` whatever id it was handed, so a blank id read as a successful resolution —
+ * the explicit-id family's version of the blindness in [[shared-test-double-defaults]].
+ */
+function statusFor(status: object, hash: string = mockTorrentStatus.hash) {
+  return (params: unknown[]) => delugeStatusResult({ [hash]: status }, params[0]);
 }
 
 describe('DelugeClient', () => {
@@ -479,7 +490,8 @@ describe('DelugeClient', () => {
       const dupErrorMessage =
         "Failure: <Fault 4: \"<class 'deluge.error.AddTorrentError'>: Torrent already in session (" + dupHash + ').">';
 
-      function dupAddHandler(addMethod: string, statusResult: unknown) {
+      /** `session` holds what the daemon actually has; the adoption read resolves against it. */
+      function dupAddHandler(addMethod: string, session: Record<string, object>) {
         return http.post(`${BASE_URL}/json`, async ({ request }) => {
           const body = await request.json() as { method: string; params: unknown[]; id: number };
           if (body.method === 'auth.login') {
@@ -493,7 +505,7 @@ describe('DelugeClient', () => {
             return HttpResponse.json({ id: body.id, result: null, error: { message: dupErrorMessage, code: 4 } });
           }
           if (body.method === 'core.get_torrent_status') {
-            return HttpResponse.json({ id: body.id, result: statusResult, error: null });
+            return HttpResponse.json({ id: body.id, result: delugeStatusResult(session, body.params[0]), error: null });
           }
           return HttpResponse.json({ id: body.id, result: null, error: null });
         });
@@ -501,7 +513,7 @@ describe('DelugeClient', () => {
 
       it('magnet path: adopts existing torrent on AddTorrentError when present', async () => {
         const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
-        server.use(dupAddHandler('core.add_torrent_magnet', { ...mockTorrentStatus, hash: dupHash }));
+        server.use(dupAddHandler('core.add_torrent_magnet', { [dupHash]: { ...mockTorrentStatus, hash: dupHash } }));
 
         const result = await client.addDownload(artifact);
         expect(result).toBe(dupHash);
@@ -509,7 +521,7 @@ describe('DelugeClient', () => {
 
       it('torrent-file path: adopts existing torrent on AddTorrentError when present', async () => {
         const artifact: DownloadArtifact = { type: 'torrent-bytes', data: Buffer.from('fake'), infoHash: dupHash };
-        server.use(dupAddHandler('core.add_torrent_file', { ...mockTorrentStatus, hash: dupHash }));
+        server.use(dupAddHandler('core.add_torrent_file', { [dupHash]: { ...mockTorrentStatus, hash: dupHash } }));
 
         const result = await client.addDownload(artifact);
         expect(result).toBe(dupHash);
@@ -517,6 +529,7 @@ describe('DelugeClient', () => {
 
       it('rethrows original error when torrent absent (race/removed)', async () => {
         const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        // Empty session: the daemon holds nothing, so the adoption read takes the documented miss.
         server.use(dupAddHandler('core.add_torrent_magnet', {}));
 
         const error = await client.addDownload(artifact).catch((e: unknown) => e);
@@ -570,7 +583,7 @@ describe('DelugeClient', () => {
     it('returns mapped status from core.get_torrent_status', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => mockTorrentStatus,
+        'core.get_torrent_status': statusFor(mockTorrentStatus),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -585,7 +598,7 @@ describe('DelugeClient', () => {
     it('returns null when torrent not found', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({}),
+        'core.get_torrent_status': statusFor({}),
       }));
 
       const result = await client.getDownload('nonexistent');
@@ -595,7 +608,7 @@ describe('DelugeClient', () => {
     it('maps download_rate to downloadSpeed in bytes/sec', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, download_rate: 524288 }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, download_rate: 524288 }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -605,7 +618,7 @@ describe('DelugeClient', () => {
     it('preserves download_rate=0 (stalled) rather than coercing to undefined', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, download_rate: 0 }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, download_rate: 0 }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -615,7 +628,7 @@ describe('DelugeClient', () => {
     it('leaves downloadSpeed undefined when download_rate field is absent', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => mockTorrentStatus,
+        'core.get_torrent_status': statusFor(mockTorrentStatus),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -625,7 +638,7 @@ describe('DelugeClient', () => {
     it('parses null nullable fields and maps them identically to omitting them', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({
+        'core.get_torrent_status': statusFor({
           ...mockTorrentStatus,
           download_rate: null,
           hash: null,
@@ -636,7 +649,7 @@ describe('DelugeClient', () => {
 
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => mockTorrentStatus,
+        'core.get_torrent_status': statusFor(mockTorrentStatus),
       }));
       const omitted = await client.getDownload('abc123def456');
 
@@ -646,7 +659,7 @@ describe('DelugeClient', () => {
     it('coalesces download_rate:null to undefined without clobbering a real 0', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, download_rate: null }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, download_rate: null }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -656,7 +669,7 @@ describe('DelugeClient', () => {
     // rpcHandler always mirrors a numeric request id; force Deluge's valid id:null response here.
     it('accepts an RPC envelope with id:null and maps like a numeric-id envelope', async () => {
       const nullIdHandler = http.post(`${BASE_URL}/json`, async ({ request }) => {
-        const body = await request.json() as { method: string };
+        const body = await request.json() as { method: string; params: unknown[] };
         if (body.method === 'auth.login') {
           return HttpResponse.json(
             { id: null, result: true, error: null },
@@ -667,7 +680,7 @@ describe('DelugeClient', () => {
           return HttpResponse.json({ id: null, result: true, error: null });
         }
         if (body.method === 'core.get_torrent_status') {
-          return HttpResponse.json({ id: null, result: mockTorrentStatus, error: null });
+          return HttpResponse.json({ id: null, result: statusFor(mockTorrentStatus)(body.params), error: null });
         }
         return HttpResponse.json({ id: null, result: null, error: null });
       });
@@ -676,7 +689,7 @@ describe('DelugeClient', () => {
 
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => mockTorrentStatus,
+        'core.get_torrent_status': statusFor(mockTorrentStatus),
       }));
       const withNumericId = await client.getDownload('abc123def456');
 
@@ -690,7 +703,7 @@ describe('DelugeClient', () => {
         'auth.login': () => true,
         'core.get_torrent_status': (params) => {
           capturedKeys.push(params[1] as string[]);
-          return mockTorrentStatus;
+          return statusFor(mockTorrentStatus)(params);
         },
       }));
 
@@ -701,20 +714,20 @@ describe('DelugeClient', () => {
     it('maps Seeding + is_finished=true to completed', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: true }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Seeding', is_finished: true }),
       }));
 
-      const result = await client.getDownload('abc123');
+      const result = await client.getDownload(mockTorrentStatus.hash);
       expect(result!.status).toBe('completed');
     });
 
     it('maps Seeding + is_finished=false to downloading', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: false }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Seeding', is_finished: false }),
       }));
 
-      const result = await client.getDownload('abc123');
+      const result = await client.getDownload(mockTorrentStatus.hash);
       expect(result!.status).toBe('downloading');
     });
   });
@@ -889,7 +902,7 @@ describe('DelugeClient', () => {
     it('returns completed when is_finished=true and state is not Checking or Moving', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: true }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Seeding', is_finished: true }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -899,7 +912,7 @@ describe('DelugeClient', () => {
     it('returns downloading when is_finished=true and state is Checking', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Checking', is_finished: true }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Checking', is_finished: true }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -909,7 +922,7 @@ describe('DelugeClient', () => {
     it('returns downloading when is_finished=true and state is Moving', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Moving', is_finished: true }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Moving', is_finished: true }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -919,7 +932,7 @@ describe('DelugeClient', () => {
     it('returns downloading when is_finished=false and state is Seeding', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: false }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Seeding', is_finished: false }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -929,7 +942,7 @@ describe('DelugeClient', () => {
     it('returns downloading when state is Moving (files being relocated)', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Moving', is_finished: false }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Moving', is_finished: false }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -939,7 +952,7 @@ describe('DelugeClient', () => {
     it('returns error when state is Error', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Error', is_finished: false }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Error', is_finished: false }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -949,7 +962,7 @@ describe('DelugeClient', () => {
     it('returns paused when state is Paused', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Paused', is_finished: false }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Paused', is_finished: false }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -959,7 +972,7 @@ describe('DelugeClient', () => {
     it('returns downloading when state is Queued', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Queued', is_finished: false }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, state: 'Queued', is_finished: false }),
       }));
 
       const result = await client.getDownload('abc123def456');
@@ -989,7 +1002,7 @@ describe('DelugeClient', () => {
     it('throws DownloadClientError when torrent-status response is missing required keys', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ name: 'half', state: 'Downloading' }),
+        'core.get_torrent_status': statusFor({ name: 'half', state: 'Downloading' }),
       }));
 
       const err = await client.getDownload('abc123def456').catch((e: unknown) => e);
@@ -1001,11 +1014,197 @@ describe('DelugeClient', () => {
     it('passes through unknown extra fields in torrent-status', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, futureField: 'x' }),
+        'core.get_torrent_status': statusFor({ ...mockTorrentStatus, futureField: 'x' }),
       }));
 
       const result = await client.getDownload('abc123def456');
       expect(result?.id).toBe('abc123def456');
+    });
+  });
+
+  /**
+   * #2488 — Deluge has NO selection axis: every call names its ids explicitly, so the dangerous
+   * answer here is not widening but MIS-RESOLUTION. The double below resolves by exact string
+   * equality and answers each method's documented miss shape, so a blank id can no longer read as
+   * a successful resolution the way it did against the pre-#2488 fixed-payload handler.
+   */
+  describe('blank external-id refusal (#2488)', () => {
+    const BLANKS = [
+      ['empty', ''],
+      ['spaces', '   '],
+      ['tab', '\t'],
+      ['newline', '\n '],
+      ['mixed whitespace', ' \t\n '],
+    ] as const;
+
+    const HASH = mockTorrentStatus.hash;
+    const session = { [HASH]: mockTorrentStatus };
+
+    /**
+     * Records EVERY RPC — `auth.login` included, so a refusal that still authenticated would show
+     * up rather than hiding behind a method filter.
+     */
+    function trackRpc() {
+      const calls: Array<{ method: string; params: unknown[] }> = [];
+      server.use(
+        http.post(`${BASE_URL}/json`, async ({ request }) => {
+          const body = await request.json() as { method: string; params: unknown[]; id: number };
+          calls.push({ method: body.method, params: body.params });
+
+          if (body.method === 'auth.login') {
+            return HttpResponse.json({ id: body.id, result: true, error: null }, {
+              headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` },
+            });
+          }
+          if (body.method === 'web.connected') {
+            return HttpResponse.json({ id: body.id, result: true, error: null });
+          }
+          if (body.method === 'core.get_torrent_status') {
+            return HttpResponse.json({ id: body.id, result: delugeStatusResult(session, body.params[0]), error: null });
+          }
+          // pause/resume take [[id]]; remove_torrent takes [id, deleteFiles].
+          const named = body.method === 'core.remove_torrent'
+            ? body.params[0]
+            : (body.params[0] as unknown[])[0];
+          if (!delugeResolve(session, named)) {
+            return HttpResponse.json({ id: body.id, result: null, error: delugeInvalidTorrentError(named) });
+          }
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }),
+      );
+      return { calls, of: (method: string) => calls.filter((c) => c.method === method) };
+    }
+
+    it.each(BLANKS)('getDownload returns null and issues zero RPCs for a %s id', async (_label, blank) => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload(blank)).toBeNull();
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it('stays free on repeated blank calls', async () => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload('   ')).toBeNull();
+      expect(await client.getDownload('   ')).toBeNull();
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it.each([
+      ['pauseDownload', 'core.pause_torrent'],
+      ['resumeDownload', 'core.resume_torrent'],
+    ] as const)('%s throws a typed error and sends no %s', async (method, rpcMethod) => {
+      const rpc = trackRpc();
+
+      await expect(client[method]('   ')).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of(rpcMethod)).toEqual([]);
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it.each(BLANKS)('removeDownload(%s, true) throws and sends no core.remove_torrent', async (_label, blank) => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload(blank, true)).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of('core.remove_torrent')).toEqual([]);
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it('removeDownload refuses the default deleteFiles arm too', async () => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload('   ')).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it('names the blank stored external ID so an operator can repair the record', async () => {
+      trackRpc();
+
+      const error = await client.removeDownload('', true).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toMatch(/blank/i);
+      expect((error as DownloadClientError).message).toMatch(/external id/i);
+    });
+
+    /** Positive controls — an empty `calls` array otherwise proves only that nothing was wired. */
+    it.each([
+      ['core.pause_torrent', (c: DelugeClient) => c.pauseDownload(HASH)],
+      ['core.resume_torrent', (c: DelugeClient) => c.resumeDownload(HASH)],
+      ['core.remove_torrent', (c: DelugeClient) => c.removeDownload(HASH, true)],
+    ] as const)('control: the same tracker collects one %s for a valid id', async (rpcMethod, call) => {
+      const rpc = trackRpc();
+
+      await call(client);
+
+      expect(rpc.of(rpcMethod)).toHaveLength(1);
+    });
+
+    it('control: the same tracker still serves the torrent for a valid read', async () => {
+      const rpc = trackRpc();
+
+      expect((await client.getDownload(HASH))!.id).toBe(HASH);
+
+      expect(rpc.of('core.get_torrent_status')).toHaveLength(1);
+    });
+
+    /**
+     * AC3 — an unknown-but-non-blank id keeps today's behavior exactly, through BOTH of Deluge's
+     * documented miss shapes.
+     */
+    it.each([['a'], ['0'], ['ffffffffffffffffffffffffffffffffffffffff']])(
+      'takes the normal RPC path for the non-blank unknown id %s, mapping an empty status to null',
+      async (unknown) => {
+        const rpc = trackRpc();
+
+        expect(await client.getDownload(unknown)).toBeNull();
+
+        expect(rpc.of('core.get_torrent_status')).toHaveLength(1);
+        expect(rpc.of('core.get_torrent_status')[0]!.params[0]).toBe(unknown);
+      },
+    );
+
+    it('still surfaces a Deluge-side InvalidTorrentError as a DownloadClientError', async () => {
+      const rpc = trackRpc();
+
+      const error = await client.removeDownload('ffffffffffffffffffffffffffffffffffffffff', true).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('InvalidTorrentError');
+      expect(rpc.of('core.remove_torrent')).toHaveLength(1);
+    });
+
+    it('sends the TRIMMED value on the read for a padded valid hash', async () => {
+      const rpc = trackRpc();
+
+      expect((await client.getDownload(`  ${HASH}  `))!.id).toBe(HASH);
+
+      expect(rpc.of('core.get_torrent_status')[0]!.params[0]).toBe(HASH);
+    });
+
+    it.each([
+      ['core.pause_torrent', (c: DelugeClient) => c.pauseDownload(`  ${HASH}  `), (p: unknown[]) => (p[0] as unknown[])[0]],
+      ['core.remove_torrent', (c: DelugeClient) => c.removeDownload(`  ${HASH}  `, true), (p: unknown[]) => p[0]],
+    ] as const)('sends the trimmed value on %s for a padded valid hash', async (rpcMethod, call, named) => {
+      const rpc = trackRpc();
+
+      await call(client);
+
+      expect(named(rpc.of(rpcMethod)[0]!.params)).toBe(HASH);
+    });
+
+    it('leaves the blank call out of a race with a valid resolution', async () => {
+      const rpc = trackRpc();
+
+      const [blank, valid] = await Promise.all([client.getDownload('   '), client.getDownload(HASH)]);
+
+      expect(blank).toBeNull();
+      expect(valid!.id).toBe(HASH);
+      expect(rpc.of('core.get_torrent_status')).toHaveLength(1);
     });
   });
 });

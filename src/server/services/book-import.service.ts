@@ -30,10 +30,19 @@ export interface ImportJobListing {
   };
 }
 
+export type RetryImportErrorCode =
+  | 'book_not_found'
+  | 'already_importing'
+  | 'no_failed_job'
+  | 'active_job_exists';
+
+// `error` is the operator-facing sentence and `code` the machine token (#2476 house shape) —
+// the client toasts `error` verbatim, so a bare token must never travel in it (#2529).
 export type RetryImportResult =
   | { jobId: number }
-  | { error: 'active-job-exists'; status: 409 }
-  | { error: string; status: 404 | 409 | 400 };
+  | { error: string; code: RetryImportErrorCode; status: 404 | 409 | 400 };
+
+const ACTIVE_JOB_SENTENCE = 'An import job for this book is already queued or running';
 
 export interface EnqueueImportInput {
   bookId: number;
@@ -118,9 +127,9 @@ export class BookImportService {
       .where(eq(books.id, bookId))
       .limit(1);
 
-    if (!book) return { error: 'Book not found', status: 404 };
+    if (!book) return { error: 'Book not found', code: 'book_not_found', status: 404 };
     if (book.status === 'importing') {
-      return { error: 'Import already in progress', status: 409 };
+      return { error: 'Import already in progress', code: 'already_importing', status: 409 };
     }
 
     const [failedJob] = await this.db
@@ -130,7 +139,9 @@ export class BookImportService {
       .orderBy(desc(importJobs.createdAt), desc(importJobs.id))
       .limit(1);
 
-    if (!failedJob) return { error: 'No failed import job found for this book', status: 400 };
+    if (!failedJob) {
+      return { error: 'No failed import job found for this book', code: 'no_failed_job', status: 400 };
+    }
 
     let result: RetryImportResult;
     try {
@@ -141,7 +152,7 @@ export class BookImportService {
         );
 
         if ('error' in enqueued) {
-          return enqueued;
+          return { error: ACTIVE_JOB_SENTENCE, code: 'active_job_exists' as const, status: enqueued.status };
         }
 
         await transitionBookStatus(tx, bookId, { status: 'importing' });
@@ -154,7 +165,7 @@ export class BookImportService {
           { bookId, type: failedJob.type },
           'Active import job unique-index conflict during retry (defensive backstop)',
         );
-        return { error: 'active-job-exists', status: 409 };
+        return { error: ACTIVE_JOB_SENTENCE, code: 'active_job_exists', status: 409 };
       }
       throw error;
     }

@@ -7,6 +7,7 @@ import { OwnedRecordingError } from './book-dedup.js';
 import { TaskRegistry, TaskRegistryError } from './task-registry.js';
 import type { MetadataService } from './metadata.service.js';
 import { RateLimitError, TransientError } from '@core/index.js';
+import { ImportListError } from '@core/import-lists/errors.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
@@ -2524,6 +2525,59 @@ describe('ImportListService', () => {
           expect(setCall.nextRunAt).toEqual(new Date(NOW_MS + 30 * 60_000));
         });
 
+        // The new rate-limit exhaustion error is an ordinary ImportListError, so the
+        // persisted-vs-transient split must not change shape for it (#2537 AC2).
+        describe('a Hardcover rate-limit exhaustion (#2537)', () => {
+          const EXHAUSTED =
+            'Hardcover API returned 429: Too Many Requests (rate limited; gave up after 3 attempts)';
+
+          function hardcoverSetup(providers: Array<{ fetchItems: ReturnType<typeof vi.fn> }>) {
+            for (const provider of providers) {
+              mockFactories.hardcover!.mockReturnValueOnce({ ...provider, test: vi.fn() });
+            }
+            const db = createMockDb();
+            db.select.mockReturnValue(mockDbChain([dueNytList({
+              id: 7, name: 'Throttled Hardcover', type: 'hardcover',
+              settings: { apiKey: 'key', listType: 'trending' },
+              syncIntervalMinutes: 30,
+            })]));
+            db.insert.mockReturnValue(mockDbChain([]));
+            const updateChain = mockDbChain([]);
+            db.update.mockReturnValue(updateChain);
+            return {
+              service: new ImportListService(inject<Db>(db), mockLog, makeBookService(), undefined, makeSearchDeps()),
+              updateChain,
+            };
+          }
+
+          it('records the exhaustion message and still advances nextRunAt by one interval', async () => {
+            const { service: svc, updateChain } = hardcoverSetup([
+              { fetchItems: vi.fn().mockRejectedValue(new ImportListError('Hardcover', EXHAUSTED)) },
+            ]);
+
+            const outcome = await svc.runNow(7);
+
+            expect(outcome).toEqual({ status: 'failed', message: EXHAUSTED });
+            const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+            expect(setCall.lastSyncError).toBe(EXHAUSTED);
+            expect(setCall.nextRunAt).toEqual(new Date(NOW_MS + 30 * 60_000));
+          });
+
+          it('clears lastSyncError on the next successful sync', async () => {
+            const { service: svc, updateChain } = hardcoverSetup([
+              { fetchItems: vi.fn().mockRejectedValue(new ImportListError('Hardcover', EXHAUSTED)) },
+              { fetchItems: vi.fn().mockResolvedValue([]) },
+            ]);
+
+            await svc.runNow(7);
+            const recovered = await svc.runNow(7);
+
+            expect(recovered).toMatchObject({ status: 'ok' });
+            const setCall = updateChain.set.mock.calls[1]![0] as Record<string, unknown>;
+            expect(setCall.lastSyncError).toBeNull();
+          });
+        });
+
         it('logs the caught error serialized, not the derived message string', async () => {
           const cause = new Error('socket hang up');
           const { service: svc } = setup({
@@ -2628,6 +2682,7 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
   function setup(opts: {
     items: { title: string; author?: string }[];
     isExcluded: ReturnType<typeof vi.fn>;
+    recordAdded?: ReturnType<typeof vi.fn>;
     findDuplicate?: ReturnType<typeof vi.fn>;
     create?: ReturnType<typeof vi.fn>;
     searchImmediately?: boolean;
@@ -2645,7 +2700,8 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
       ...(opts.findDuplicate && { findDuplicate: opts.findDuplicate }),
       create,
     });
-    const exclusions = inject<ImportListExclusionService>({ isExcluded: opts.isExcluded });
+    const recordAdded = opts.recordAdded ?? vi.fn().mockResolvedValue({ row: { id: 900 }, inserted: true });
+    const exclusions = inject<ImportListExclusionService>({ isExcluded: opts.isExcluded, recordAdded });
     const searchDeps = opts.searchImmediately === undefined
       ? undefined
       : makeSearchDeps({ searchImmediately: opts.searchImmediately });
@@ -2653,13 +2709,13 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
     const service = new ImportListService(
       inject<Db>(db), mockLog, bookService, undefined, searchDeps, exclusions,
     );
-    return { service, create, exclusions };
+    return { service, create, exclusions, recordAdded };
   }
 
   it('does not create an excluded book and reports excludedCount on the completion log', async () => {
     const { service, create } = setup({
       items: [{ title: 'Excluded Book', author: 'Author One' }],
-      isExcluded: vi.fn().mockResolvedValue({ id: 42 }),
+      isExcluded: vi.fn().mockResolvedValue({ id: 42, kind: 'deleted' }),
     });
 
     await service.syncDueLists();
@@ -2686,6 +2742,63 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
     );
   });
 
+  it('buckets an added-kind refusal as a skip, leaving every counter at zero (#2530)', async () => {
+    const { service, create } = setup({
+      items: [{ title: 'Already Added', author: 'Author One' }],
+      isExcluded: vi.fn().mockResolvedValue({ id: 42, kind: 'added' }),
+    });
+
+    await service.syncDueLists();
+
+    // Exactly what `findDuplicate` used to report for this item, so the sync line and the card
+    // toast keep their present meaning.
+    expect(create).not.toHaveBeenCalled();
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 0, heldReviewCount: 0, excludedCount: 0 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('records the add for a created item, with the list name snapshot (#2530)', async () => {
+    const { service, recordAdded } = setup({
+      items: [{ title: 'Fresh Book', author: 'Author One' }],
+      isExcluded: vi.fn().mockResolvedValue(null),
+    });
+
+    await service.syncDueLists();
+
+    expect(recordAdded).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Fresh Book', authorName: 'Author One' }),
+      { importListId: 1, importListName: 'My NYT' },
+    );
+  });
+
+  it('keeps an added refusal and a deleted refusal in different buckets in one batch (#2530)', async () => {
+    const { service } = setup({
+      items: [
+        { title: 'Fresh Book', author: 'Author One' },
+        { title: 'Already Added', author: 'Author Two' },
+        { title: 'Deleted Book', author: 'Author Three' },
+        { title: 'Held Book', author: 'Author Four' },
+      ],
+      isExcluded: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 42, kind: 'added' })
+        .mockResolvedValueOnce({ id: 43, kind: 'deleted' })
+        .mockResolvedValue(null),
+      findDuplicate: vi.fn()
+        .mockResolvedValueOnce({ verdict: 'different-recording', book: null, hasIncumbent: false })
+        .mockResolvedValue({ verdict: 'review', book: { id: 555, title: 'Owned' }, hasIncumbent: true }),
+    });
+
+    await service.syncDueLists();
+
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 1, heldReviewCount: 1, excludedCount: 1 }),
+      'Import list sync completed',
+    );
+  });
+
   it('keeps the three counters disjoint across an excluded, a held and a created item', async () => {
     const { service } = setup({
       items: [
@@ -2694,7 +2807,7 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
         { title: 'Fresh Book', author: 'Author Three' },
       ],
       isExcluded: vi.fn()
-        .mockResolvedValueOnce({ id: 42 })
+        .mockResolvedValueOnce({ id: 42, kind: 'deleted' })
         .mockResolvedValue(null),
       findDuplicate: vi.fn()
         .mockResolvedValueOnce({ verdict: 'review', book: { id: 555, title: 'Owned' }, hasIncumbent: true })
@@ -2712,7 +2825,7 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
   it('still skips an empty-title item and miscounts neither it nor the excluded one', async () => {
     const { service } = setup({
       items: [{ title: '   ' }, { title: 'Excluded Book', author: 'Author One' }],
-      isExcluded: vi.fn().mockResolvedValue({ id: 42 }),
+      isExcluded: vi.fn().mockResolvedValue({ id: 42, kind: 'deleted' }),
     });
 
     await service.syncDueLists();
@@ -2735,7 +2848,7 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
         { title: 'Excluded Book', author: 'Author One' },
         { title: 'Fresh Book', author: 'Author Two' },
       ],
-      isExcluded: vi.fn().mockResolvedValueOnce({ id: 42 }).mockResolvedValue(null),
+      isExcluded: vi.fn().mockResolvedValueOnce({ id: 42, kind: 'deleted' }).mockResolvedValue(null),
     });
 
     await service.syncDueLists();
@@ -2752,7 +2865,7 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
         { title: 'Excluded Book', author: 'Author One' },
         { title: 'Fresh Book', author: 'Author Two' },
       ],
-      isExcluded: vi.fn().mockResolvedValueOnce({ id: 42 }).mockResolvedValue(null),
+      isExcluded: vi.fn().mockResolvedValueOnce({ id: 42, kind: 'deleted' }).mockResolvedValue(null),
       create: vi.fn().mockResolvedValue(madeBook(70, 'Fresh Book')),
       searchImmediately: true,
     });
@@ -2796,7 +2909,7 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
   });
 
   it('gates every list, not just the one that recorded the exclusion', async () => {
-    const isExcluded = vi.fn().mockResolvedValue({ id: 42 });
+    const isExcluded = vi.fn().mockResolvedValue({ id: 42, kind: 'deleted' });
     const { service } = setup({
       items: [{ title: 'Excluded Book', author: 'Author One' }],
       isExcluded,

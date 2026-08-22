@@ -4,6 +4,7 @@ import { CLIENT_STATUSES, PIPELINE_STAGES } from '@shared/schemas/activity';
 import { SUGGESTION_REASONS } from '@shared/schemas/discovery';
 import { BOOK_STATUSES, ENRICHMENT_STATUSES, PRODUCTION_TYPES } from '@shared/schemas/book';
 import { BLACKLIST_REASONS } from '@shared/schemas/blacklist';
+import { IMPORT_LIST_EXCLUSION_KINDS } from '@shared/schemas/import-list-exclusion';
 import { COMPANION_EBOOK_STATUSES } from '@shared/schemas/companion-ebook';
 import { INDEXER_TYPES } from '@shared/indexer-registry';
 import { DOWNLOAD_CLIENT_TYPES } from '@shared/download-client-registry';
@@ -438,12 +439,14 @@ export const blacklist = sqliteTable('blacklist', {
 ]);
 
 /**
- * Books an operator deleted after an import list added them, so no list re-adds them (#2305).
+ * Identities no import list may add: deleted books (#2305) and books a list already added (#2530).
  *
  * The identity columns feed `matchesLibraryIdentity`: `asin` is canonicalized before insert and the
  * two author columns hold the raw primary-author name and its slug. No unique index — the
  * author+title arm is non-transitive and cannot be a key, so convergence is the exclusion service's
  * single transaction instead. `importListName` is a display snapshot that outlives the FK's set-null.
+ *
+ * `kind` defaults to `deleted` so every pre-#2530 row keeps its meaning with no data migration.
  */
 export const importListExclusions = sqliteTable('import_list_exclusions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -451,6 +454,7 @@ export const importListExclusions = sqliteTable('import_list_exclusions', {
   title: text('title').notNull(),
   authorName: text('author_name'),
   authorSlug: text('author_slug'),
+  kind: text('kind', { enum: IMPORT_LIST_EXCLUSION_KINDS }).notNull().default('deleted'),
   importListId: integer('import_list_id').references(() => importLists.id, { onDelete: 'set null' }),
   importListName: text('import_list_name'),
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -583,6 +587,9 @@ export const importSubmissionItems = sqliteTable('import_submission_items', {
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
   existingBookId: integer('existing_book_id').references(() => books.id, { onDelete: 'set null' }),
   existingTitle: text('existing_title'),
+  // #2091 confirm-time snapshot of the incumbent's folder. Deliberately not an FK read: the
+  // set-null on existing_book_id must not take the path with it, or the report loses half the story.
+  existingPath: text('existing_path'),
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

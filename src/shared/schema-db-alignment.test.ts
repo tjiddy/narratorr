@@ -12,6 +12,7 @@ import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-clie
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from './import-list-registry.js';
 import { blacklistReasonSchema, blacklistTypeSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
+import { importListExclusionKindSchema, IMPORT_LIST_EXCLUSION_KINDS } from './schemas/import-list-exclusion.js';
 import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.js';
 import { connectorTypeSchema } from './schemas/connector.js';
 import { importJobTypeSchema, importJobStatusSchema, importJobPhaseSchema } from './schemas/import-job.js';
@@ -23,7 +24,7 @@ import {
   submissionSourceSchema, SUBMISSION_SOURCES,
 } from '@core/import-staging/schemas.js';
 import { companionEbookStatusSchema, COMPANION_EBOOK_STATUSES } from './schemas/companion-ebook.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems, companionEbooks } from '@db/schema.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, importListExclusions, downloads, suggestions, bookEvents, connectors, importJobs, importSubmissions, importSubmissionItems, companionEbooks } from '@db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -65,6 +66,14 @@ describe('schema-DB alignment', () => {
 
     it('blacklist.reason DB column enum matches BLACKLIST_REASONS tuple', () => {
       expect([...blacklist.reason.enumValues].sort()).toEqual([...BLACKLIST_REASONS].sort());
+    });
+
+    it('importListExclusionKindSchema.options matches IMPORT_LIST_EXCLUSION_KINDS tuple', () => {
+      expect([...importListExclusionKindSchema.options].sort()).toEqual([...IMPORT_LIST_EXCLUSION_KINDS].sort());
+    });
+
+    it('importListExclusions.kind DB column enum matches IMPORT_LIST_EXCLUSION_KINDS tuple', () => {
+      expect([...importListExclusions.kind.enumValues].sort()).toEqual([...IMPORT_LIST_EXCLUSION_KINDS].sort());
     });
 
     it('suggestionReasonSchema.options matches SUGGESTION_REASONS tuple', () => {

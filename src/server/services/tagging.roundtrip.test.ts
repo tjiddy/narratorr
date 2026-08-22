@@ -721,7 +721,21 @@ describe.skipIf(!CAN_RUN)('#2078 re-tag self-heals a metadata-naked merged m4b, 
     expect(readChapterCount(merged)).toBe(2);
   });
 
-  it('an import-path pass leaves the full set on disk with chapters intact', async () => {
+  /** The embed's own in-section re-read — and, since #2480, the sole source of the tags it writes. */
+  const importRowService = (path: string, overrides: Record<string, unknown> = {}) => ({
+    getById: () => Promise.resolve({
+      id: 1, title: 'The Way of Kings', path,
+      authors: [{ name: 'Brandon Sanderson' }, { name: 'Co Author' }],
+      narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
+      seriesName: 'The Stormlight Archive', seriesPosition: 1,
+      asin: 'B00ABCDEFG', subtitle: 'Book One', description: 'An epic fantasy.',
+      publisher: 'Tor Books', publishedDate: '2010-08-31', genres: ['Fantasy', 'Epic'],
+      coverUrl: null,
+      ...overrides,
+    }),
+  });
+
+  it('an import-path pass writes the ROW\'s values to disk, joined authors and all, with chapters intact', async () => {
     const importDir = mkdtempSync(join(tmpdir(), 'narratorr-2210-import-'));
     try {
       const merged = makeNakedMergedM4b('Import Book.m4b');
@@ -736,21 +750,56 @@ describe.skipIf(!CAN_RUN)('#2078 re-tag self-heals a metadata-naked merged m4b, 
         embedCover: false,
         bookId: 1,
         targetPath: importDir,
-        book: {
-          title: 'The Way of Kings', authorName: 'Brandon Sanderson', narrator: 'Michael Kramer',
-          seriesName: 'The Stormlight Archive', seriesPosition: 1, asin: 'B00ABCDEFG',
-          subtitle: 'Book One', publisher: 'Tor Books', coverUrl: null,
-        },
-        // The #2461 in-section guard: the row must still name the folder being tagged.
-        bookService: { getById: () => Promise.resolve({ id: 1, path: importDir }) } as never,
+        // #2480: the row is both the ownership guard's operand and the tag payload.
+        bookService: importRowService(importDir) as never,
         log: { info: () => {}, warn: () => {}, debug: () => {} } as never,
       });
 
       expect(await readExistingTags(target)).toMatchObject({
         album: 'The Way of Kings', series: 'The Stormlight Archive',
         asin: 'B00ABCDEFG', subtitle: 'Book One', publisher: 'Tor Books',
+        // Every author, not just the first: the import path converged on retag's join (AC5).
+        artist: 'Brandon Sanderson, Co Author', albumArtist: 'Brandon Sanderson, Co Author',
+        composer: 'Michael Kramer, Kate Reading',
       });
       expect(readChapterCount(target)).toBe(2);
+    } finally {
+      try { rmSync(importDir, { recursive: true, force: true }); } catch { /* tolerated */ }
+    }
+  });
+
+  it('under populate_missing, an edit queued behind the import fills the empty fields — and no pre-import value becomes sticky', async () => {
+    const importDir = mkdtempSync(join(tmpdir(), 'narratorr-2480-populate-'));
+    try {
+      const merged = makeNakedMergedM4b('Sticky Book.m4b');
+      const target = join(importDir, 'Sticky Book.m4b');
+      copyFileSync(merged, target);
+
+      // The file arrives carrying the pre-import title and nothing else.
+      await tagFile(target, PYTHON!, { album: 'Pre-Import Title', title: 'Pre-Import Title' }, 'overwrite');
+
+      const { embedTagsForImport } = await import('../utils/import-steps.js');
+      await embedTagsForImport({
+        taggingService: makeService(importDir),
+        taggingEnabled: true,
+        taggingMode: 'populate_missing',
+        embedCover: false,
+        bookId: 1,
+        targetPath: importDir,
+        bookService: importRowService(importDir, { title: 'Corrected Title' }) as never,
+        log: { info: () => {}, warn: () => {}, debug: () => {} } as never,
+      });
+
+      const after = await readExistingTags(target);
+      // Stated, not silently asserted: populate_missing declines to overwrite an already-populated
+      // field, so the operator's title lands on the next overwrite retag, not here.
+      expect(after.album).toBe('Pre-Import Title');
+      // The empty fields are what populate_missing writes — and they carry the row's values, which
+      // is exactly where a stale pre-import projection would have become sticky.
+      expect(after.series).toBe('The Stormlight Archive');
+      expect(after.asin).toBe('B00ABCDEFG');
+      expect(after.artist).toBe('Brandon Sanderson, Co Author');
+      expect(after.composer).toBe('Michael Kramer, Kate Reading');
     } finally {
       try { rmSync(importDir, { recursive: true, force: true }); } catch { /* tolerated */ }
     }

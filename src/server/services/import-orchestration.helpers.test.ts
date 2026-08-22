@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { BookService } from './book.service.js';
@@ -34,17 +35,21 @@ vi.mock('./library-scan.helpers.js', () => ({
 type AnyFsFn = (...args: unknown[]) => Promise<unknown>;
 const fsMocks = vi.hoisted(() => {
   const noop: AnyFsFn = () => Promise.resolve();
-  return { rm: vi.fn(), cp: vi.fn(), readdir: vi.fn(), real: { rm: noop, cp: noop, readdir: noop } };
+  // `stat` is a passthrough only — #2478 needs it as an observation point for "no filesystem read
+  // on the source happened at all".
+  return { rm: vi.fn(), cp: vi.fn(), readdir: vi.fn(), stat: vi.fn(), real: { rm: noop, cp: noop, readdir: noop, stat: noop } };
 });
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   fsMocks.real.rm = actual.rm as unknown as AnyFsFn;
   fsMocks.real.cp = actual.cp as unknown as AnyFsFn;
   fsMocks.real.readdir = actual.readdir as unknown as AnyFsFn;
+  fsMocks.real.stat = actual.stat as unknown as AnyFsFn;
   fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
   fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
   fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
-  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp, readdir: fsMocks.readdir };
+  fsMocks.stat.mockImplementation((...args: unknown[]) => fsMocks.real.stat(...args));
+  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp, readdir: fsMocks.readdir, stat: fsMocks.stat };
 });
 
 function createMockLogger(): FastifyBaseLogger {
@@ -877,6 +882,132 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
     } finally {
       await fsMocks.real.rm(external, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * #2478 AC13 — the worker-side repeat of the route's containment refusal. `orchestrateCopy` is the
+ * only place a queued job's source is re-checked, so a job enqueued before the route guard existed
+ * cannot bypass it.
+ */
+describe('copyToLibrary — source containment (#2478)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({ findPathOwners: vi.fn().mockResolvedValue([]) }),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (path: string): ImportConfirmItem => ({ path, title: 'Title', authorName: 'Author' });
+
+  beforeEach(async () => {
+    fsMocks.rm.mockReset();
+    fsMocks.cp.mockReset();
+    fsMocks.readdir.mockReset();
+    fsMocks.stat.mockReset();
+    fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+    fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+    fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
+    fsMocks.stat.mockImplementation((...args: unknown[]) => fsMocks.real.stat(...args));
+
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-2478-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsMocks.real.rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('refuses a filesystem-root source before touching the filesystem at all', async () => {
+    await expect(copyWithRoot(item('/'), null, 'move', buildDeps()))
+      .rejects.toThrow(/filesystem root/i);
+
+    // The module boundary, not just the thrown message: neither the disc-group reconstruction nor
+    // the copy's own `stat` may run on a source this broad.
+    expect(fsMocks.stat).not.toHaveBeenCalled();
+    expect(fsMocks.readdir).not.toHaveBeenCalled();
+  });
+
+  it('refuses a source that contains the library root', async () => {
+    await expect(copyWithRoot(item(baseDir), null, 'move', buildDeps()))
+      .rejects.toThrow(/contains the library root/i);
+
+    expect(fsMocks.stat).not.toHaveBeenCalled();
+    expect(fsMocks.readdir).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The ordering AC13's placement exists to protect: source-equals-target returns cleanly today,
+   * and the target is by construction INSIDE the library, so a guard hoisted above the early
+   * return would newly throw on a legitimate no-op.
+   */
+  it('still short-circuits the same-path case rather than refusing it', async () => {
+    const target = join(libraryRoot, 'Author', 'Title');
+
+    await expect(copyWithRoot(item(target), null, 'copy', buildDeps()))
+      .resolves.toMatchObject({ targetPath: toPosix(target) });
+  });
+
+  /**
+   * `posix-resolve-ignores-backslash`: a `/library/A/../Y` fixture is vacuous here — bare `resolve`
+   * already collapses it on POSIX. Only the backslash form reds against the pre-#2478 check.
+   */
+  it('refuses a backslash-spelled `..` escape that resolves back inside the library', async () => {
+    const escaped = `${libraryRoot}\\A\\..\\Y`;
+
+    await expect(copyWithRoot(item(escaped), null, 'move', buildDeps()))
+      .rejects.toThrow(/inside the library root/i);
+  });
+
+  /**
+   * #2538 AC7/AC13 — the worker half of the resolved rule. `realpath` is real in this suite (the
+   * `node:fs/promises` mock spreads the actual module and overrides only rm/cp/readdir/stat), so the
+   * link below is genuinely followed.
+   */
+  it.skipIf(!CAN_SYMLINK)('refuses a symlinked source resolving into the library, before any filesystem mutation', async () => {
+    const managed = join(libraryRoot, 'Managed Book');
+    await mkdir(managed, { recursive: true });
+    await writeFile(join(managed, 'book.m4b'), Buffer.alloc(1024));
+    const link = join(baseDir, 'link-into-library');
+    await symlink(managed, link, 'dir');
+
+    await expect(copyWithRoot(item(link), null, 'move', buildDeps()))
+      .rejects.toThrow(/inside the library root/i);
+
+    // The source tree is intact and nothing was written or removed. `import-failure-cleanup-is-per-file`:
+    // the per-entry observation points, not a `recursive: true` negative, which is vacuous here.
+    expect(existsSync(join(managed, 'book.m4b'))).toBe(true);
+    expect(fsMocks.cp).not.toHaveBeenCalled();
+    expect(fsMocks.rm).not.toHaveBeenCalledWith(join(managed, 'book.m4b'), { force: true });
+    expect(fsMocks.rm).not.toHaveBeenCalled();
+    expect(fsMocks.stat).not.toHaveBeenCalled();
+    expect(fsMocks.readdir).not.toHaveBeenCalled();
+    expect(existsSync(join(libraryRoot, 'Author'))).toBe(false);
+  });
+
+  /**
+   * AC7's ordering under the resolved rule. The sibling case above uses a target that does not exist,
+   * where realpath would ENOENT back to the lexical verdict anyway; here the target is REAL, so the
+   * resolved form has a live opinion (inside-library) and the early return is the only thing that can
+   * still let this legitimate no-op through.
+   */
+  it('short-circuits the same-path case even when the target really exists on disk', async () => {
+    const target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(target, { recursive: true });
+
+    await expect(copyWithRoot(item(target), null, 'copy', buildDeps()))
+      .resolves.toMatchObject({ targetPath: toPosix(target) });
   });
 });
 

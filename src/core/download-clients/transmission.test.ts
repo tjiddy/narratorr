@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { transmissionSelects, type TransmissionIdentifiable } from '../__tests__/download-client-id-semantics.js';
 import { ZodError } from 'zod';
 import { TransmissionClient } from './transmission.js';
 import { DownloadClientError } from './errors.js';
@@ -40,14 +41,45 @@ function torrentBytesArtifact(data: Buffer = Buffer.from('fake'), infoHash = 'fa
   return { type: 'torrent-bytes', data, infoHash };
 }
 
+type RpcBody = { method: string; arguments?: Record<string, unknown> };
+
+/**
+ * Routes `torrent-get`'s `ids` through the shared Transmission selection model, so an OMITTED
+ * `ids` serves the WIDENING answer a missing guard would exploit rather than a convenient empty
+ * list. The pre-#2488 handler answered a fixed `torrents` array regardless of `ids` and was
+ * structurally unable to see this class of defect ([[shared-test-double-defaults]]).
+ */
 function rpcHandler(expectedMethod?: string, responseArgs?: Record<string, unknown>) {
   return http.post(RPC_URL, async ({ request }) => {
-    const body = (await request.json()) as { method: string };
+    const body = (await request.json()) as RpcBody;
     if (expectedMethod && body.method !== expectedMethod) {
       return HttpResponse.json({ result: 'error', arguments: {} });
     }
     return HttpResponse.json(
-      { result: 'success', arguments: responseArgs || {} },
+      { result: 'success', arguments: selectTorrents(body, responseArgs) },
+      { headers: { 'X-Transmission-Session-Id': SESSION_ID } },
+    );
+  });
+}
+
+function selectTorrents(body: RpcBody, responseArgs?: Record<string, unknown>): Record<string, unknown> {
+  if (body.method !== 'torrent-get' || !responseArgs) return responseArgs || {};
+  const torrents = responseArgs.torrents as readonly TransmissionIdentifiable[];
+  return { ...responseArgs, torrents: transmissionSelects(body.arguments?.ids, torrents) };
+}
+
+/**
+ * Serves `responseArgs` verbatim and makes NO id decision — for envelope- and parser-level cases
+ * whose payload is deliberately malformed and therefore cannot carry an identity to select on.
+ */
+function rawRpcHandler(expectedMethod: string, responseArgs: Record<string, unknown>) {
+  return http.post(RPC_URL, async ({ request }) => {
+    const body = (await request.json()) as RpcBody;
+    if (body.method !== expectedMethod) {
+      return HttpResponse.json({ result: 'error', arguments: {} });
+    }
+    return HttpResponse.json(
+      { result: 'success', arguments: responseArgs },
       { headers: { 'X-Transmission-Session-Id': SESSION_ID } },
     );
   });
@@ -500,7 +532,7 @@ describe('TransmissionClient', () => {
 
   describe('edge cases — null/malformed responses', () => {
     it('throws DownloadClientError when torrents is null (not an array)', async () => {
-      server.use(rpcHandler('torrent-get', { torrents: null }));
+      server.use(rawRpcHandler('torrent-get', { torrents: null }));
 
       await expect(client.getDownload('abc123')).rejects.toThrow(/Transmission returned unexpected torrent data/);
     });
@@ -653,7 +685,7 @@ describe('TransmissionClient', () => {
 
   describe('schema validation', () => {
     it('throws DownloadClientError with ZodError cause when torrents is a string', async () => {
-      server.use(rpcHandler('torrent-get', { torrents: 'not-an-array' as unknown as object }));
+      server.use(rawRpcHandler('torrent-get', { torrents: 'not-an-array' as unknown as object }));
 
       const err = await client.getDownload('abc123').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DownloadClientError);
@@ -661,8 +693,9 @@ describe('TransmissionClient', () => {
     });
 
     it('throws DownloadClientError when torrent item is missing hashString (mapTorrent field)', async () => {
+      // A torrent with no hashString carries no identity to select on, so this stays raw.
       const { hashString: _, ...torrentMissingHash } = mockTorrent;
-      server.use(rpcHandler('torrent-get', { torrents: [torrentMissingHash] }));
+      server.use(rawRpcHandler('torrent-get', { torrents: [torrentMissingHash] }));
 
       const err = await client.getDownload('abc123').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DownloadClientError);
@@ -673,7 +706,8 @@ describe('TransmissionClient', () => {
       const { leftUntilDone: _, ...torrentMissingLeft } = mockTorrent;
       server.use(rpcHandler('torrent-get', { torrents: [torrentMissingLeft] }));
 
-      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      // The id must match the fixture's hashString, or the double answers [] and never parses.
+      const err = await client.getDownload(mockTorrent.hashString).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DownloadClientError);
       expect((err as DownloadClientError).cause).toBeInstanceOf(ZodError);
     });
@@ -702,6 +736,179 @@ describe('TransmissionClient', () => {
 
       const result = await client.test();
       expect(result.success).toBe(false);
+    });
+  });
+
+  /**
+   * #2488 — `downloads.external_id` is nullable text and every server-side caller guards on FALSY,
+   * so a whitespace-only id is truthy and reaches this adapter. Transmission's `ids` is a
+   * per-element lookup and an OMITTED `ids` means EVERY torrent (rpc-spec.md §3.1), which puts
+   * `torrent-remove` + `delete-local-data` one dropped key away from the whole session. The guard
+   * refuses ahead of request construction, so the body is structurally impossible to build.
+   *
+   * The observable is the RPC COUNT and the body contents, never a param readback
+   * ([[url-strips-trailing-query-whitespace]]).
+   */
+  describe('blank external-id refusal (#2488)', () => {
+    const BLANKS = [
+      ['empty', ''],
+      ['spaces', '   '],
+      ['tab', '\t'],
+      ['newline', '\n '],
+      ['mixed whitespace', ' \t\n '],
+    ] as const;
+
+    const unrelated = { ...mockTorrent, hashString: '351c0c2d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b', name: "Someone Else's Audiobook" };
+
+    /**
+     * Records every RPC the client sent and answers `torrent-get` through the shared model, so an
+     * `ids`-less probe has a torrent to wrongly adopt or delete.
+     */
+    function trackRpc() {
+      const bodies: RpcBody[] = [];
+      server.use(
+        http.post(RPC_URL, async ({ request }) => {
+          const body = (await request.json()) as RpcBody;
+          bodies.push(body);
+          return HttpResponse.json(
+            { result: 'success', arguments: selectTorrents(body, { torrents: [mockTorrent, unrelated] }) },
+            { headers: { 'X-Transmission-Session-Id': SESSION_ID } },
+          );
+        }),
+      );
+      return {
+        bodies,
+        of: (method: string) => bodies.filter((b) => b.method === method),
+      };
+    }
+
+    it.each(BLANKS)('getDownload returns null and issues zero RPCs for a %s id', async (_label, blank) => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload(blank)).toBeNull();
+
+      expect(rpc.bodies).toEqual([]);
+    });
+
+    // A refusal must be free every time, not memoized or otherwise stateful.
+    it('stays free on repeated blank calls', async () => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload('   ')).toBeNull();
+      expect(await client.getDownload('   ')).toBeNull();
+
+      expect(rpc.bodies).toEqual([]);
+    });
+
+    it.each([
+      ['pauseDownload', 'torrent-stop'],
+      ['resumeDownload', 'torrent-start'],
+    ] as const)('%s throws a typed error and sends no %s', async (method, rpcMethod) => {
+      const rpc = trackRpc();
+
+      await expect(client[method]('   ')).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of(rpcMethod)).toEqual([]);
+      expect(rpc.bodies).toEqual([]);
+    });
+
+    it.each(BLANKS)('removeDownload(%s, true) throws and sends no destructive torrent-remove', async (_label, blank) => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload(blank, true)).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of('torrent-remove')).toEqual([]);
+      expect(rpc.bodies).toEqual([]);
+    });
+
+    it('removeDownload refuses the default deleteFiles arm too', async () => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload('   ')).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.bodies).toEqual([]);
+    });
+
+    it('names the blank stored external ID so an operator can repair the record', async () => {
+      trackRpc();
+
+      const error = await client.removeDownload('', true).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toMatch(/blank/i);
+      expect((error as DownloadClientError).message).toMatch(/external id/i);
+    });
+
+    /**
+     * Positive controls for the absence assertions above: an empty `bodies` array otherwise proves
+     * only that the handler was never wired ([[vacuous-assertion-observation-points]]).
+     */
+    it.each([
+      ['torrent-stop', (c: TransmissionClient) => c.pauseDownload(mockTorrent.hashString)],
+      ['torrent-start', (c: TransmissionClient) => c.resumeDownload(mockTorrent.hashString)],
+      ['torrent-remove', (c: TransmissionClient) => c.removeDownload(mockTorrent.hashString, true)],
+    ] as const)('control: the same tracker collects one %s for a valid id', async (rpcMethod, call) => {
+      const rpc = trackRpc();
+
+      await call(client);
+
+      expect(rpc.of(rpcMethod)).toHaveLength(1);
+      expect(rpc.of(rpcMethod)[0]!.arguments?.ids).toEqual([mockTorrent.hashString]);
+    });
+
+    it('control: the same tracker serves the torrent for a valid read', async () => {
+      const rpc = trackRpc();
+
+      expect((await client.getDownload(mockTorrent.hashString))!.id).toBe(mockTorrent.hashString);
+
+      expect(rpc.of('torrent-get')).toHaveLength(1);
+    });
+
+    /**
+     * The boundary that separates "blank" from "unresolvable": this is a blankness guard, not hash
+     * format validation, so non-blank garbage keeps taking the normal RPC path (#2485 kept 'a' live
+     * on qBittorrent for the same reason).
+     */
+    it.each([['a'], ['0'], ['12abc']])('takes the normal RPC path for non-blank garbage %s', async (garbage) => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload(garbage)).toBeNull();
+
+      expect(rpc.of('torrent-get')).toHaveLength(1);
+      expect(rpc.of('torrent-get')[0]!.arguments?.ids).toEqual([garbage]);
+    });
+
+    it('sends the TRIMMED value for a padded valid hash and resolves it like its trimmed form', async () => {
+      const rpc = trackRpc();
+
+      expect((await client.getDownload(`  ${mockTorrent.hashString}  `))!.id).toBe(mockTorrent.hashString);
+
+      expect(rpc.of('torrent-get')[0]!.arguments?.ids).toEqual([mockTorrent.hashString]);
+    });
+
+    it.each([
+      ['torrent-stop', (c: TransmissionClient) => c.pauseDownload(`  ${mockTorrent.hashString}  `)],
+      ['torrent-remove', (c: TransmissionClient) => c.removeDownload(`  ${mockTorrent.hashString}  `, true)],
+    ] as const)('sends the trimmed value on %s for a padded valid hash', async (rpcMethod, call) => {
+      const rpc = trackRpc();
+
+      await call(client);
+
+      expect(rpc.of(rpcMethod)[0]!.arguments?.ids).toEqual([mockTorrent.hashString]);
+    });
+
+    it('leaves the blank call out of a race with a valid resolution', async () => {
+      const rpc = trackRpc();
+
+      const [blank, valid] = await Promise.all([
+        client.getDownload('   '),
+        client.getDownload(mockTorrent.hashString),
+      ]);
+
+      expect(blank).toBeNull();
+      expect(valid!.id).toBe(mockTorrent.hashString);
+      // Exactly the valid call's own request, and nothing from the blank one.
+      expect(rpc.bodies).toHaveLength(1);
     });
   });
 });

@@ -9,6 +9,8 @@ import {
   LIBRARY_FILTER_BUCKET_KEYS,
   LIBRARY_FILTER_VALUES,
   libraryStatusFilterSchema,
+  bucketForStatus,
+  invertLibraryFilterBuckets,
 } from './book.js';
 
 describe('enrichmentStatusSchema', () => {
@@ -83,6 +85,128 @@ describe('libraryStatusFilterSchema — bucket-only wire contract (#1447)', () =
 
   it('bucket keys == LIBRARY_FILTER_VALUES minus `all`', () => {
     expect([...LIBRARY_FILTER_BUCKET_KEYS]).toEqual(LIBRARY_FILTER_VALUES.filter((v) => v !== 'all'));
+  });
+});
+
+describe('bucketForStatus — derived status→bucket inverse (#2541)', () => {
+  it('is total over BOOK_STATUSES and round-trips through LIBRARY_FILTER_BUCKETS', () => {
+    for (const status of BOOK_STATUSES) {
+      const bucket = bucketForStatus(status);
+      expect(LIBRARY_FILTER_BUCKETS[bucket]).toContain(status);
+    }
+  });
+
+  it('produces every bucket key — no bucket is left without a member status', () => {
+    const produced = new Set(BOOK_STATUSES.map(bucketForStatus));
+    expect([...produced].sort()).toEqual([...LIBRARY_FILTER_BUCKET_KEYS].sort());
+  });
+
+  // The two sub-transitions the series badge keys on: both sides of each pair must fold together,
+  // or the badge flickers mid-grab and mid-import.
+  it('folds searching and downloading onto the same bucket', () => {
+    expect(bucketForStatus('searching')).toBe('downloading');
+    expect(bucketForStatus('downloading')).toBe('downloading');
+  });
+
+  it('folds importing and imported onto the same bucket', () => {
+    expect(bucketForStatus('importing')).toBe('imported');
+    expect(bucketForStatus('imported')).toBe('imported');
+  });
+
+  it('is derived from the partition, not a second literal map', () => {
+    const swapped = invertLibraryFilterBuckets({
+      ...LIBRARY_FILTER_BUCKETS,
+      wanted: ['wanted', 'importing'],
+      imported: ['imported'],
+    });
+    expect(swapped.importing).toBe('wanted');
+  });
+
+  it('throws rather than yielding undefined when a status has no bucket', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: [] }),
+    ).toThrow(/missing/);
+  });
+});
+
+describe('invertLibraryFilterBuckets — duplicate membership guard (#2546)', () => {
+  // Each case pins the whole ordered clause. Token-presence assertions cannot distinguish the two
+  // bucket positions, and `searching`/`importing` are the only statuses that are not also bucket
+  // keys — so a fixture built on them makes status, first bucket and second bucket three distinct
+  // tokens, and no position can be satisfied by another position's value.
+  it('throws when a status is claimed by two different buckets, naming both in order', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, failed: ['failed', 'importing'] }),
+    ).toThrow('duplicated: importing in both imported and failed');
+  });
+
+  it('names the later bucket even when it shares its key with the duplicated status', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, wanted: ['wanted', 'imported'] }),
+    ).toThrow('duplicated: imported in both wanted and imported');
+  });
+
+  it('throws when a status is listed twice inside a single bucket', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, wanted: ['wanted', 'wanted'] }),
+    ).toThrow(/duplicated: wanted in both wanted and wanted/);
+  });
+
+  it('names every duplicated status, not just the first one found', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({
+        ...LIBRARY_FILTER_BUCKETS,
+        wanted: ['wanted', 'imported', 'failed'],
+      }),
+    ).toThrow('duplicated: imported in both wanted and imported, failed in both wanted and failed');
+  });
+
+  // The two fixtures differ only in which array index carries the duplicate, so an implementation
+  // that skipped either index would drop this clause.
+  it('catches a duplicate in the first array position as well as the last', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['searching', 'missing'] }),
+    ).toThrow('duplicated: searching in both downloading and missing');
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['missing', 'searching'] }),
+    ).toThrow('duplicated: searching in both downloading and missing');
+  });
+
+  it('reports the duplicate, not the orphan, when a partition has both', () => {
+    let thrown: unknown;
+    try {
+      invertLibraryFilterBuckets({
+        ...LIBRARY_FILTER_BUCKETS,
+        failed: ['failed', 'searching'],
+        missing: [],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toContain('duplicated: searching in both downloading and failed');
+    expect(message).not.toContain('unbucketed');
+    // `missing` is the orphan this fixture creates; its absence proves the orphan arm never ran.
+    expect(message).not.toContain('missing');
+  });
+
+  it('accepts the production partition and returns one entry per canonical status', () => {
+    const inverse = invertLibraryFilterBuckets(LIBRARY_FILTER_BUCKETS);
+    expect(Object.keys(inverse).sort()).toEqual([...BOOK_STATUSES].sort());
+    for (const status of BOOK_STATUSES) {
+      expect(LIBRARY_FILTER_BUCKETS[inverse[status]]).toContain(status);
+    }
+  });
+
+  // An empty bucket is not by itself a defect: this is still a total, non-overlapping cover.
+  it('accepts an empty bucket whose status is covered elsewhere', () => {
+    const inverse = invertLibraryFilterBuckets({
+      ...LIBRARY_FILTER_BUCKETS,
+      wanted: ['wanted', 'missing'],
+      missing: [],
+    });
+    expect(inverse.missing).toBe('wanted');
   });
 });
 

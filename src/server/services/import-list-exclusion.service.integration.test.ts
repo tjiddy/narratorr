@@ -6,6 +6,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { importListExclusions, importLists } from '@db/schema.js';
 import { NestedTransactionError } from '@db/serial-transactions.js';
+import type { ImportListExclusionKind } from '@shared/schemas/import-list-exclusion.js';
 import { ImportListExclusionService } from './import-list-exclusion.service.js';
 import { createMockLogger } from '../__tests__/helpers.js';
 
@@ -38,8 +39,10 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
     }
   });
 
-  const exclude = async (identity: { title: string; asin?: string | null; authorName?: string | null }) =>
-    (await service.recordExclusion(identity, NO_PROVENANCE)).row;
+  const exclude = async (
+    identity: { title: string; asin?: string | null; authorName?: string | null },
+    kind: ImportListExclusionKind = 'deleted',
+  ) => (await service.recordExclusion(identity, NO_PROVENANCE, kind)).row;
 
   describe('identity — the ASIN arm', () => {
     it('refuses a candidate whose ASIN differs only by case and padding', async () => {
@@ -211,6 +214,7 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
       const { row } = await service.recordExclusion(
         { title: 'The Reckoning', authorName: 'Jane Doe' },
         { importListId: list!.id, importListName: 'Bestsellers' },
+        'deleted',
       );
 
       expect(row.importListId).toBe(list!.id);
@@ -234,8 +238,8 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
       const identity = { title: 'The Reckoning', asin: 'B0AAA11111', authorName: 'Jane Doe' };
 
       const [a, b] = await Promise.all([
-        service.recordExclusion(identity, NO_PROVENANCE),
-        service.recordExclusion(identity, NO_PROVENANCE),
+        service.recordExclusion(identity, NO_PROVENANCE, 'added'),
+        service.recordExclusion(identity, NO_PROVENANCE, 'added'),
       ]);
 
       expect(a.row.id).toBe(b.row.id);
@@ -245,8 +249,8 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
     it('converges with the completion order reversed', async () => {
       const identity = { title: 'The Reckoning', authorName: 'Jane Doe' };
 
-      const second = service.recordExclusion(identity, NO_PROVENANCE);
-      const first = service.recordExclusion(identity, NO_PROVENANCE);
+      const second = service.recordExclusion(identity, NO_PROVENANCE, 'added');
+      const first = service.recordExclusion(identity, NO_PROVENANCE, 'added');
       const [b, a] = await Promise.all([second, first]);
 
       expect(a.row.id).toBe(b.row.id);
@@ -256,7 +260,7 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
     it('rejects with NestedTransactionError when called inside an open transaction', async () => {
       await expect(
         db.transaction(async () => {
-          await service.recordExclusion({ title: 'The Reckoning' }, NO_PROVENANCE);
+          await service.recordExclusion({ title: 'The Reckoning' }, NO_PROVENANCE, 'added');
         }),
       ).rejects.toBeInstanceOf(NestedTransactionError);
     });
@@ -326,6 +330,199 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
       await service.delete(row.id);
 
       expect(await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBeNull();
+    });
+  });
+
+  describe('kind — the write boundary (#2530)', () => {
+    it('rejects a kind outside the shared vocabulary and persists nothing', async () => {
+      // The cast is what makes the guard observable: every production writer passes a literal from
+      // the union, so without defeating the compile-time check this call would not compile at all.
+      await expect(
+        service.recordExclusion(
+          { title: 'The Reckoning' },
+          NO_PROVENANCE,
+          'archived' as unknown as ImportListExclusionKind,
+        ),
+      ).rejects.toThrow();
+
+      expect(await db.select().from(importListExclusions)).toHaveLength(0);
+    });
+
+    it('builds every writer’s value object through buildExclusionValues, normalizing ASIN and slug', () => {
+      const values = service.buildExclusionValues(
+        { title: 'The Reckoning', asin: ' b0abc12345 ', authorName: '   ' },
+        { importListId: 3, importListName: 'Bestsellers' },
+        'added',
+      );
+
+      expect(values).toEqual({
+        asin: 'B0ABC12345',
+        title: 'The Reckoning',
+        authorName: '   ',
+        authorSlug: null,
+        importListId: 3,
+        importListName: 'Bestsellers',
+        kind: 'added',
+      });
+    });
+  });
+
+  describe('kind — the gate reads both, the writer scopes to one (#2530)', () => {
+    it('refuses on an added row and reports its kind', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      const match = await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(match?.kind).toBe('added');
+    });
+
+    it('refuses on a deleted row and reports its kind', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'deleted');
+
+      const match = await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(match?.kind).toBe('deleted');
+    });
+
+    it('still refuses when both kinds cover the same identity', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'added');
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'deleted');
+
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' })).not.toBeNull();
+    });
+
+    it('INSERTS a deleted tombstone over an identity that only has an added row', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      const result = await service.recordExclusion(
+        { title: 'The Reckoning', authorName: 'Jane Doe' },
+        NO_PROVENANCE,
+        'deleted',
+      );
+
+      expect(result.inserted).toBe(true);
+      expect(await db.select().from(importListExclusions)).toHaveLength(2);
+    });
+
+    it('converges a repeated added record on one row', async () => {
+      const first = await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      const second = await service.recordExclusion(
+        { title: 'The Reckoning', authorName: 'Jane Doe' },
+        NO_PROVENANCE,
+        'added',
+      );
+
+      expect(second.inserted).toBe(false);
+      expect(second.row.id).toBe(first.id);
+      expect(await db.select().from(importListExclusions)).toHaveLength(1);
+    });
+
+    it('recordAdded writes the added arm', async () => {
+      const { row } = await service.recordAdded({ title: 'The Reckoning', authorName: 'Jane Doe' }, NO_PROVENANCE);
+
+      expect(row.kind).toBe('added');
+    });
+
+    it('stores NULL for an added row whose author slugs to nothing, and finds it again', async () => {
+      const row = await exclude({ title: 'The Reckoning', authorName: ' ?? ' }, 'added');
+
+      expect(row.authorSlug).toBeNull();
+      expect((await service.isExcluded({ title: 'The Reckoning', authorName: '!!!' }))?.id).toBe(row.id);
+    });
+  });
+
+  describe('removeAdded (#2530)', () => {
+    it('deletes the matching added rows and reports the count', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      expect(await service.removeAdded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBe(1);
+      expect(await db.select().from(importListExclusions)).toHaveLength(0);
+    });
+
+    it('leaves a matching deleted tombstone untouched', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'deleted');
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      expect(await service.removeAdded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBe(1);
+
+      const remaining = await db.select().from(importListExclusions);
+      expect(remaining.map((r) => r.kind)).toEqual(['deleted']);
+    });
+
+    it('leaves a non-matching added row alone', async () => {
+      await exclude({ title: 'The Awakening', authorName: 'Jane Doe' }, 'added');
+
+      expect(await service.removeAdded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBe(0);
+      expect(await db.select().from(importListExclusions)).toHaveLength(1);
+    });
+
+    it('reports 0 against an empty table', async () => {
+      expect(await service.removeAdded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBe(0);
+    });
+
+    it('honours the tolerant title arm — a subtitle-stripped form by the same author', async () => {
+      await exclude({ title: 'Foo: The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      expect(await service.removeAdded({ title: 'Foo', authorName: 'Jane Doe' })).toBe(1);
+    });
+
+    it('honours the non-transitivity rule — both sides stripped a subtitle', async () => {
+      await exclude({ title: 'Foo: The Reckoning', authorName: 'Jane Doe' }, 'added');
+
+      expect(await service.removeAdded({ title: 'Foo: A Different Story', authorName: 'Jane Doe' })).toBe(0);
+      expect(await db.select().from(importListExclusions)).toHaveLength(1);
+    });
+  });
+
+  describe('getAll — the kind filter (#2530)', () => {
+    async function seedBoth(): Promise<void> {
+      for (let i = 1; i <= 5; i++) {
+        await db.insert(importListExclusions).values({
+          title: `D${i}`, kind: 'deleted', createdAt: new Date(1_700_000_000_000 + i * 60_000),
+        });
+        await db.insert(importListExclusions).values({
+          title: `A${i}`, kind: 'added', createdAt: new Date(1_700_000_000_000 + i * 60_000),
+        });
+      }
+    }
+
+    it('scopes both data and total to the requested kind', async () => {
+      await seedBoth();
+
+      const { data, total } = await service.getAll({ kind: 'added' });
+
+      expect(total).toBe(5);
+      expect(data.every((r) => r.kind === 'added')).toBe(true);
+    });
+
+    it('reports the unfiltered total when no kind is given', async () => {
+      await seedBoth();
+
+      expect((await service.getAll()).total).toBe(10);
+    });
+
+    it('applies the filter before pagination and keeps newest-first with a descending id tiebreak', async () => {
+      await seedBoth();
+      const added = (await service.getAll({ kind: 'added' })).data;
+
+      const { data, total } = await service.getAll({ kind: 'added', limit: 2, offset: 1 });
+
+      expect(total).toBe(5);
+      expect(data.map((r) => r.id)).toEqual([added[1]!.id, added[2]!.id]);
+      // Newest first, and the shared-timestamp pair below proves the id tiebreak survives the filter.
+      expect(added.map((r) => r.title)).toEqual(['A5', 'A4', 'A3', 'A2', 'A1']);
+    });
+
+    it('breaks a shared timestamp by descending id under the filter', async () => {
+      const shared = new Date(1_700_000_000_000);
+      await db.insert(importListExclusions).values({ title: 'Tie Low', kind: 'added', createdAt: shared });
+      await db.insert(importListExclusions).values({ title: 'Tie High', kind: 'added', createdAt: shared });
+      await db.insert(importListExclusions).values({ title: 'Deleted Tie', kind: 'deleted', createdAt: shared });
+
+      const { data } = await service.getAll({ kind: 'added' });
+
+      expect(data.map((r) => r.title)).toEqual(['Tie High', 'Tie Low']);
     });
   });
 });

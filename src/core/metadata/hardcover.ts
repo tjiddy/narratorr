@@ -1,13 +1,22 @@
 import { z } from 'zod';
-import { fetchWithTimeout } from '../utils/network-service.js';
 import { HARDCOVER_TIMEOUT_MS } from '../utils/constants.js';
 import { MAX_VARIANT_TITLE_LENGTH } from '../utils/title-variants.js';
+import {
+  fetchHardcoverGraphQL,
+  normalizeHardcoverApiKey,
+  TOP_LEVEL_LIMIT_EXCEEDED,
+  type HardcoverErrorDetail,
+  type HardcoverFetchOutcome,
+} from '../utils/hardcover-http.js';
+import { parseRetryAfterMs } from './retry-after.js';
 import { normalizeMemberPosition, pickPreferredMembersByPosition } from './hardcover-member-dedup.js';
 import { RateLimitError, TransientError, MetadataError } from './errors.js';
 
 const HARDCOVER_PROVIDER = 'hardcover';
-const GRAPHQL_URL = 'https://api.hardcover.app/v1/graphql';
 
+// Depth watch (#2537): Hardcover's roadmap limits query depth to 3 in 2026. This query runs
+// series → book_series → book → image (~4), so it breaks when that ships — as will the
+// import-list provider's queries, simultaneously and for the same reason.
 const GET_SERIES_MEMBERS_QUERY = `
   query GetSeriesMembers($name: String!, $author: String!, $today: date!) {
     series(where: {
@@ -38,6 +47,7 @@ const GET_SERIES_MEMBERS_QUERY = `
   }
 `;
 
+// Depth watch (#2537): same series → book_series → book → image nesting as above (~4).
 const GET_SERIES_MEMBERS_BY_ID_QUERY = `
   query GetSeriesMembersById($id: Int!, $today: date!) {
     series(where: {
@@ -142,16 +152,31 @@ function isoDateToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function mapHttpError(status: number, statusText: string, retryAfterHeader: string | null): never {
+/**
+ * Every arm except the 429 one carries the numeric status, because `mapHardcoverError` keys its
+ * invalid-key hint on '401'/'403' as message substrings. `RateLimitError` is exempt: its message is
+ * fixed by its constructor and the type is shared with Audible and Audnexus, and the server mapper
+ * recognizes rate limiting BY TYPE, so widening it for one adapter's diagnostics would buy nothing.
+ */
+function mapHttpError(
+  status: number,
+  statusText: string,
+  retryAfterHeader: string | null,
+  detail: HardcoverErrorDetail,
+): never {
+  const suffix = detail.suffix ?? '';
+  // A structural top-level-query refusal is a malformed request, not a throttle — surface it as
+  // actionable whatever status Hardcover attaches, rather than looping behind "try again".
+  if (detail.code === TOP_LEVEL_LIMIT_EXCEEDED) {
+    throw new MetadataError(HARDCOVER_PROVIDER, `Hardcover API returned ${status}: ${statusText}${suffix}`);
+  }
   if (status === 429) {
-    const retrySeconds = retryAfterHeader ? Number(retryAfterHeader) : Number.NaN;
-    const retryAfterMs = Number.isFinite(retrySeconds) && retrySeconds > 0 ? retrySeconds * 1000 : 60_000;
-    throw new RateLimitError(retryAfterMs, HARDCOVER_PROVIDER);
+    throw new RateLimitError(parseRetryAfterMs(retryAfterHeader), HARDCOVER_PROVIDER);
   }
   if (status >= 500) {
-    throw new TransientError(HARDCOVER_PROVIDER, `HTTP ${status}: ${statusText}`);
+    throw new TransientError(HARDCOVER_PROVIDER, `HTTP ${status}: ${statusText}${suffix}`);
   }
-  throw new MetadataError(HARDCOVER_PROVIDER, `Hardcover API returned ${status}: ${statusText}`);
+  throw new MetadataError(HARDCOVER_PROVIDER, `Hardcover API returned ${status}: ${statusText}${suffix}`);
 }
 
 function mapNetworkError(error: unknown): never {
@@ -194,26 +219,27 @@ function mapSeries(entry: z.infer<typeof hardcoverSeriesSchema>): HardcoverSerie
 }
 
 async function executeGraphQL(apiKey: string, body: { query: string; variables?: Record<string, unknown> }): Promise<unknown> {
-  let res: Response;
+  let outcome: HardcoverFetchOutcome;
   try {
-    res = await fetchWithTimeout(GRAPHQL_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-    }, HARDCOVER_TIMEOUT_MS);
+    // No retry budget: the metadata client's single-shot 429 disposition is a typed RateLimitError
+    // that MetadataService's gate already honors.
+    outcome = await fetchHardcoverGraphQL({
+      apiKey,
+      query: body.query,
+      variables: body.variables,
+      timeoutMs: HARDCOVER_TIMEOUT_MS,
+      budget: null,
+    });
   } catch (error: unknown) {
     mapNetworkError(error);
   }
 
-  if (!res.ok) {
-    mapHttpError(res.status, res.statusText, res.headers.get('Retry-After'));
+  if (!outcome.ok) {
+    mapHttpError(outcome.status, outcome.statusText, outcome.retryAfterHeader, outcome);
   }
 
   try {
-    return await res.json();
+    return await outcome.response.json();
   } catch (error: unknown) {
     throw new MetadataError(HARDCOVER_PROVIDER, `Failed to parse Hardcover response: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -223,8 +249,7 @@ export class HardcoverClient {
   private readonly apiKey: string;
 
   constructor(apiKey: string) {
-    // Users paste the documented `Bearer <token>` value; normalize the optional prefix once.
-    this.apiKey = apiKey.replace(/^\s*bearer(?:\s+|$)/i, '').trim();
+    this.apiKey = normalizeHardcoverApiKey(apiKey);
   }
 
   async getSeriesMembers(name: string, author: string): Promise<HardcoverSeriesData | null> {

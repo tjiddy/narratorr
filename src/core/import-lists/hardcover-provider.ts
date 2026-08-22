@@ -3,8 +3,16 @@ import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
 import { formatZodError } from './format-zod-error.js';
 import { getErrorMessage } from '@shared/error-message.js';
-import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
+import {
+  createRateLimitBudget,
+  fetchHardcoverGraphQL,
+  normalizeHardcoverApiKey,
+  scopeGuidanceSentence,
+  TOP_LEVEL_LIMIT_EXCEEDED,
+  type HardcoverFetchFailure,
+  type HardcoverRateLimitBudget,
+} from '../utils/hardcover-http.js';
 import { parseHardcoverListUrl } from '@shared/hardcover-list-url.js';
 import type { HardcoverListType, HardcoverImportMax } from '@shared/hardcover-list-types.js';
 
@@ -15,8 +23,6 @@ export interface HardcoverConfig {
   listUrl?: string;
   importMax?: HardcoverImportMax;
 }
-
-const GRAPHQL_URL = 'https://api.hardcover.app/v1/graphql';
 
 // Cap full custom-list pages independently of untrusted books_count.
 const PAGE_SIZE = 100;
@@ -37,6 +43,9 @@ const SHELF_LIMIT = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Trending and shelf both resolve GraphQL books; share one projection with mapBook.
+// Depth watch (#2537): Hardcover's roadmap limits query depth to 3 in 2026. Inlined into
+// CUSTOM_LIST_QUERY this reaches list_books → book → default_audio_edition → image → url (~6),
+// so that limit breaks every query in this file, and the metadata client's, at once.
 const BOOK_FRAGMENT = `
   fragment BookFields on books {
     id
@@ -81,6 +90,8 @@ const SHELF_QUERY = `
 
 // Private/unresolved lists return lists: []. Hasura multi-column order must use an
 // array of single-key objects; key order inside one object is not preserved.
+// Depth watch (#2537): the deepest query here — lists → list_books → book →
+// default_audio_edition → image → url (~6) against a roadmapped depth-3 limit.
 const CUSTOM_LIST_QUERY = `
   query CustomList($username: citext!, $slug: String!, $limit: Int!, $offset: Int!) {
     lists(
@@ -213,6 +224,21 @@ function trendingWindow(): { from: string; to: string } {
   };
 }
 
+/**
+ * The probe reports a disposition rather than the sync's free-form message: a throttle and a
+ * structural refusal both arrive as a 429, but only one is worth waiting out.
+ */
+function probeFailureMessage(failure: HardcoverFetchFailure): string {
+  if (failure.code === TOP_LEVEL_LIMIT_EXCEEDED) return failure.message;
+  if (failure.status === 429) return 'Hardcover is rate-limiting requests. Try again shortly.';
+  const suffix = failure.suffix ?? '';
+  // Before the 401/403 arm, which would shadow it: an under-scoped token is correctly typed, so
+  // "Invalid API key" misdirects the operator into regenerating a key that was never wrong (#2554).
+  if (failure.code === 'insufficient_scope') return `${scopeGuidanceSentence(failure.scope)}${suffix}`;
+  if (failure.status === 401 || failure.status === 403) return `Invalid API key${suffix}`;
+  return `API returned ${failure.status}: ${failure.statusText}${suffix}`;
+}
+
 export class HardcoverProvider implements ImportListProvider {
   readonly type = 'hardcover';
   readonly name = 'Hardcover';
@@ -224,7 +250,7 @@ export class HardcoverProvider implements ImportListProvider {
   private importMax?: HardcoverImportMax;
 
   constructor(config: HardcoverConfig) {
-    this.apiKey = config.apiKey;
+    this.apiKey = normalizeHardcoverApiKey(config.apiKey);
     this.listType = config.listType;
     if (config.shelfId !== undefined) this.shelfId = config.shelfId;
     if (config.listUrl !== undefined) this.listUrl = config.listUrl;
@@ -232,23 +258,26 @@ export class HardcoverProvider implements ImportListProvider {
   }
 
   async fetchItems(): Promise<ImportListItem[]> {
-    if (this.listType === 'custom') return this.fetchCustomList();
-    return this.listType === 'shelf' ? this.fetchShelf() : this.fetchTrending();
+    // Call-local by construction: two fetchItems() on one instance — concurrent or sequential —
+    // each get an independent full wait budget, with no reset step and no ordering invariant.
+    const budget = createRateLimitBudget();
+    if (this.listType === 'custom') return this.fetchCustomList(budget);
+    return this.listType === 'shelf' ? this.fetchShelf(budget) : this.fetchTrending(budget);
   }
 
-  private async fetchCustomList(): Promise<ImportListItem[]> {
+  private async fetchCustomList(budget: HardcoverRateLimitBudget): Promise<ImportListItem[]> {
     const { username, slug } = this.requireParsedUrl();
     const importMax = this.importMax ?? 50;
-    if (importMax === 'all') return this.fetchAllPages(username, slug);
+    if (importMax === 'all') return this.fetchAllPages(username, slug, budget);
 
-    const data = await this.executeQuery(CUSTOM_LIST_QUERY, { username, slug, limit: importMax, offset: 0 });
+    const data = await this.executeQuery(CUSTOM_LIST_QUERY, { username, slug, limit: importMax, offset: 0 }, budget);
     const rows = this.resolveRows(data);
     this.validateRowIds(rows);
     return this.emitRows(rows, new Set<number>());
   }
 
   // Deduplicate raw row IDs before mapping so dropped books still consume their slot.
-  private async fetchAllPages(username: string, slug: string): Promise<ImportListItem[]> {
+  private async fetchAllPages(username: string, slug: string, budget: HardcoverRateLimitBudget): Promise<ImportListItem[]> {
     const seen = new Set<number>();
     const items: ImportListItem[] = [];
     let offset = 0;
@@ -257,7 +286,7 @@ export class HardcoverProvider implements ImportListProvider {
     let fullPagesFetched = 0;
 
     for (;;) {
-      const data = await this.executeQuery(CUSTOM_LIST_QUERY, { username, slug, limit: PAGE_SIZE, offset });
+      const data = await this.executeQuery(CUSTOM_LIST_QUERY, { username, slug, limit: PAGE_SIZE, offset }, budget);
       const list = this.resolveList(data);
       const rows = this.requireRows(list);
       this.validateRowIds(rows);
@@ -329,16 +358,16 @@ export class HardcoverProvider implements ImportListProvider {
     return out;
   }
 
-  private async fetchTrending(): Promise<ImportListItem[]> {
+  private async fetchTrending(budget: HardcoverRateLimitBudget): Promise<ImportListItem[]> {
     const { from, to } = trendingWindow();
     const idsData = await this.executeQuery(TRENDING_IDS_QUERY, {
       from, to, limit: TRENDING_LIMIT, offset: 0,
-    });
+    }, budget);
 
     const ids = idsData.data?.books_trending?.ids ?? [];
     if (ids.length === 0) return [];
 
-    const booksData = await this.executeQuery(BOOKS_BY_IDS_QUERY, { ids });
+    const booksData = await this.executeQuery(BOOKS_BY_IDS_QUERY, { ids }, budget);
 
     // The second query is unordered; restore the ranking from books_trending.ids.
     const byId = new Map<number, ImportListItem>();
@@ -349,8 +378,8 @@ export class HardcoverProvider implements ImportListProvider {
     return ids.map((id) => byId.get(id)).filter((item): item is ImportListItem => item != null);
   }
 
-  private async fetchShelf(): Promise<ImportListItem[]> {
-    const data = await this.executeQuery(SHELF_QUERY, { statusId: this.shelfId, limit: SHELF_LIMIT });
+  private async fetchShelf(budget: HardcoverRateLimitBudget): Promise<ImportListItem[]> {
+    const data = await this.executeQuery(SHELF_QUERY, { statusId: this.shelfId, limit: SHELF_LIMIT }, budget);
     return (data.data?.user_books ?? [])
       .map((entry) => entry.book)
       .filter((book): book is HardcoverBook => book != null)
@@ -358,24 +387,19 @@ export class HardcoverProvider implements ImportListProvider {
       .filter((item): item is ImportListItem => item != null);
   }
 
+  // The single chokepoint for all five request sites, so 429 backoff covers every list type
+  // and every page without any caller opting in.
   private async executeQuery(
     query: string,
-    variables?: Record<string, unknown>,
+    variables: Record<string, unknown> | undefined,
+    budget: HardcoverRateLimitBudget,
   ): Promise<HardcoverResponse> {
-    const res = await fetchWithTimeout(GRAPHQL_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(variables ? { query, variables } : { query }),
-    }, IMPORT_LIST_TIMEOUT_MS);
+    const outcome = await fetchHardcoverGraphQL({
+      apiKey: this.apiKey, query, variables, timeoutMs: IMPORT_LIST_TIMEOUT_MS, budget,
+    });
+    if (!outcome.ok) throw new ImportListError(this.name, outcome.message);
 
-    if (!res.ok) {
-      throw new ImportListError(this.name, `Hardcover API returned ${res.status}: ${res.statusText}`);
-    }
-
-    const raw: unknown = await res.json();
+    const raw: unknown = await outcome.response.json();
     const parsed = hardcoverResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new ImportListError(
@@ -393,24 +417,14 @@ export class HardcoverProvider implements ImportListProvider {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       const { query, variables } = this.buildProbe();
-      const res = await fetchWithTimeout(GRAPHQL_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({ query, variables }),
-      }, IMPORT_LIST_TIMEOUT_MS);
+      // Single-shot: the settings Test button is synchronous and operator-facing, so a hidden
+      // 60s backoff would read as a hang.
+      const outcome = await fetchHardcoverGraphQL({
+        apiKey: this.apiKey, query, variables, timeoutMs: IMPORT_LIST_TIMEOUT_MS, budget: null,
+      });
+      if (!outcome.ok) return { success: false, message: probeFailureMessage(outcome) };
 
-      if (res.status === 401 || res.status === 403) {
-        return { success: false, message: 'Invalid API key' };
-      }
-
-      if (!res.ok) {
-        return { success: false, message: `API returned ${res.status}: ${res.statusText}` };
-      }
-
-      const raw: unknown = await res.json();
+      const raw: unknown = await outcome.response.json();
       const parsed = hardcoverResponseSchema.safeParse(raw);
       if (!parsed.success) {
         return { success: false, message: `Validation failed: ${formatZodError(parsed.error)}` };

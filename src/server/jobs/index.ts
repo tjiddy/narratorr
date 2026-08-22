@@ -14,6 +14,7 @@ import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
 import { runDiscoveryJob } from './discovery.js';
 import { runCoverBackfill } from './cover-backfill.js';
+import { runGenreMarkerSweep } from './genre-marker-sweep.js';
 import { runSeriesRefreshJob } from './series-refresh.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
@@ -157,22 +158,33 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
   return { stopAll };
 }
 
+// Each step guarded independently (#2557): the last two run ONLY at boot (cover backfill and the
+// genre sweep have no cron), so an early throw would silently lose them for the process lifetime.
+// The orchestrator batches are re-run by import-maintenance within minutes; the sweep and backfill
+// are not.
 async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLogger): Promise<void> {
-  // Reset only pipelineStage; completed clientStatus is the recovery entry point.
-  const resetResult = await db
-    .update(downloads)
-    .set({ pipelineStage: 'idle' })
-    .where(inArray(downloads.pipelineStage, ['checking', 'importing']))
-    .returning({ id: downloads.id });
+  await runGuarded(log, 'Startup recovery: stuck-download reset failed', async () => {
+    // Reset only pipelineStage; completed clientStatus is the recovery entry point.
+    const resetResult = await db
+      .update(downloads)
+      .set({ pipelineStage: 'idle' })
+      .where(inArray(downloads.pipelineStage, ['checking', 'importing']))
+      .returning({ id: downloads.id });
 
-  if (resetResult.length > 0) {
-    log.info({ count: resetResult.length }, 'Startup recovery: reset stuck downloads to completed');
-  }
+    if (resetResult.length > 0) {
+      log.info({ count: resetResult.length }, 'Startup recovery: reset stuck downloads to completed');
+    }
+  });
 
-  await services.qualityGateOrchestrator.processCompletedDownloads();
-  await services.importOrchestrator.processCompletedDownloads();
+  await runGuarded(log, 'Startup recovery: quality-gate batch failed', () =>
+    services.qualityGateOrchestrator.processCompletedDownloads());
+  await runGuarded(log, 'Startup recovery: import batch failed', () =>
+    services.importOrchestrator.processCompletedDownloads());
 
-  await runCoverBackfill(db, log, services.connector);
+  await runGuarded(log, 'Startup recovery: cover backfill failed', () =>
+    runCoverBackfill(db, log, services.connector));
+  await runGuarded(log, 'Startup recovery: genre marker sweep failed', () =>
+    runGenreMarkerSweep(db, services.book, log));
 }
 
 // Croner owns both firing and the next-run timestamp exposed by TaskRegistry.
