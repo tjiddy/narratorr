@@ -177,6 +177,27 @@ function detectSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogger,
   return detected;
 }
 
+/**
+ * Resolves the slot, or `null` once the caller aborted. A deliberate exception to
+ * abort-verdict-not-error-shape: the abort BOUNDS this tail rather than failing it, because the
+ * stream's `expired` catch would otherwise replace an answer the ladder already produced with
+ * `results: []` — the regression #2568 AC7 forbids. Guards before subscribing, since an
+ * already-aborted signal never re-fires `abort` and a waiter registered against one never settles.
+ */
+async function acquireUnlessAborted(
+  semaphore: BoundedSemaphore,
+  signal: AbortSignal | undefined,
+): Promise<SlotRelease | null> {
+  if (signal?.aborted) return null;
+  try {
+    return await semaphore.acquire({ signal });
+  } catch (error: unknown) {
+    // Keyed on `signal.aborted`, never the rejection's shape: a drain still propagates.
+    if (signal?.aborted) return null;
+    throw error;
+  }
+}
+
 // Fetch failures still get title detection without overwriting an earlier signal.
 function tryTitleFallback(result: SearchResult, logger: FastifyBaseLogger): boolean {
   if (result.language) return false;
@@ -301,25 +322,10 @@ export async function enrichUsenetLanguages(
   const abortSkipped: SearchResult[] = [];
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
-    // A deliberate exception to abort-verdict-not-error-shape: the abort BOUNDS this tail rather
-    // than failing it. Rethrowing would let the stream's `expired` catch replace an answer the
-    // ladder already produced with `results: []` — the regression #2568 AC7 forbids.
-    // Guard before subscribing: an already-aborted signal never re-fires `abort`, so a waiter
-    // registered against one would never settle.
-    if (signal?.aborted) {
+    const release = await acquireUnlessAborted(semaphore, signal);
+    if (release === null) {
       abortSkipped.push(result);
       return;
-    }
-    let release: SlotRelease;
-    try {
-      release = await semaphore.acquire({ signal });
-    } catch (error: unknown) {
-      // Keyed on `signal.aborted`, never the rejection's shape: a drain still propagates.
-      if (signal?.aborted) {
-        abortSkipped.push(result);
-        return;
-      }
-      throw error;
     }
     nzbFetched++;
     const cacheKey = cacheKeyFor(result)!;
