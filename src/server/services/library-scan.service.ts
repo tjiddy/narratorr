@@ -53,6 +53,8 @@ interface WithinScanEntry {
 interface AsinMatch {
   id: number;
   holdsFile: boolean;
+  /** #2091: the incumbent's folder, present exactly when `holdsFile`. */
+  path: string | null;
 }
 
 interface ScanClassificationMaps {
@@ -269,7 +271,7 @@ export class LibraryScanService {
     const existingAsinMap = new Map<string, AsinMatch>(
       titleAuthorRows
         .filter((r) => r.asin != null)
-        .map((r) => [r.asin!.toLowerCase(), { id: r.id, holdsFile: bookHoldsFile(r.path) }] as [string, AsinMatch]),
+        .map((r) => [r.asin!.toLowerCase(), { id: r.id, holdsFile: bookHoldsFile(r.path), path: r.path }] as [string, AsinMatch]),
     );
 
     const discoveries: DiscoveredBook[] = [];
@@ -333,7 +335,14 @@ export class LibraryScanService {
         return buildDiscoveredBook(...base, { isDuplicate: false, existingBookId: asinMatch.id, reviewReason });
       }
       this.log.debug({ path: folder.path, asin: parsed.asin }, 'Duplicate detected (decisive ASIN match)');
-      return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: asinMatch.id, duplicateReason: 'slug', reviewReason });
+      return buildDiscoveredBook(...base, {
+        isDuplicate: true,
+        existingBookId: asinMatch.id,
+        duplicateReason: 'slug',
+        // holdsFile is exactly `path` being non-blank; the guard is for the type, not the fact.
+        ...(asinMatch.path != null && { existingPath: asinMatch.path }),
+        reviewReason,
+      });
     }
 
     if (shape && bucketKey) {

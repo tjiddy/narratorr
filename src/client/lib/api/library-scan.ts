@@ -57,6 +57,8 @@ export interface MatchResult {
   isDuplicate?: boolean;
   existingBookId?: number;
   duplicateReason?: DuplicateReason;
+  /** #2091: the flagged incumbent's own folder; merged onto the row for the review-list section. */
+  existingPath?: string;
   /** Display-only recording warning that does not hard-skip the row. */
   reviewReason?: string;
   /** Library-hit recording verdict driving ImportCard's ownership badge. */

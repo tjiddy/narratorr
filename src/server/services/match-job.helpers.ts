@@ -53,7 +53,15 @@ export async function applyLibraryDuplicate(
         { path: result.path, existingBookId: decision.incumbent.id, title: result.bestMatch.title },
         'Post-match library duplicate detected (same recording)',
       );
-      return { ...result, isDuplicate: true, existingBookId: decision.incumbent.id, duplicateReason: 'slug', recordingVerdict: 'same-recording' };
+      return {
+        ...result,
+        isDuplicate: true,
+        existingBookId: decision.incumbent.id,
+        duplicateReason: 'slug',
+        // incumbentHoldsFile is exactly `path` being non-blank; the guard is for the type.
+        ...(decision.incumbent.path != null && { existingPath: decision.incumbent.path }),
+        recordingVerdict: 'same-recording',
+      };
     }
     if (decision.kind === 'review') {
       log.debug(

@@ -54,6 +54,8 @@ export interface BuildDiscoveredBookOptions {
   isDuplicate?: boolean | undefined;
   existingBookId?: number | undefined;
   duplicateReason?: 'path' | 'slug' | undefined;
+  /** #2091: the incumbent's own folder, meaningful only when this folder is not it. */
+  existingPath?: string | undefined;
   reviewReason?: string | undefined;
 }
 
@@ -64,7 +66,7 @@ export function buildDiscoveredBook(
   totalSize: number,
   options: BuildDiscoveredBookOptions = {},
 ): DiscoveredBook {
-  const { isDuplicate = false, existingBookId, duplicateReason, reviewReason } = options;
+  const { isDuplicate = false, existingBookId, duplicateReason, existingPath, reviewReason } = options;
   return {
     path,
     parsedTitle: parsed.title,
@@ -76,6 +78,7 @@ export function buildDiscoveredBook(
     isDuplicate,
     ...(existingBookId !== undefined && { existingBookId }),
     ...(duplicateReason !== undefined && { duplicateReason }),
+    ...(existingPath !== undefined && { existingPath }),
     ...(reviewReason !== undefined && { reviewReason }),
   };
 }
