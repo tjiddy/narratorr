@@ -3903,3 +3903,18 @@ Measured on #2527: removing the `409`/`504` entries from `src/server/routes/v1/a
 **The ratio arm is different and IS reachable through `importDownload`:** when the save-path read succeeds but a later ratio read does not, `deferOnUnavailableRatio` is true for torrents, so the `null` ratio yields `live-state-unavailable`, which logs the deferral and sets `pendingCleanup`. Exercising it needs a double that answers the FIRST read and misses the second.
 
 **Rule.** Before planning a test around post-import cleanup, check whether the row can still be located in the download client — the save-path read is an earlier, unconditional gate on the same identifier. Exemplars: the `#2488` describe in src/server/services/import.service.test.ts drives the real TransmissionClient over MSW and pins both the abort boundary and the reachable ratio deferral. Related: [[degrading-adapter-invisible-to-mock-suite]] — a mock adapter set to reject hides this entirely, because it never models the read that fails first.
+
+## mocked-response-single-use-body
+
+**source:** #2573  
+**added:** 2026-08-22  
+**files:** src/server/utils/enrich-usenet-languages.test.ts  
+**tags:** vitest, undici, fetch-mocking
+
+---
+
+A `Response` body is single-use. `vi.fn().mockResolvedValue(new Response(xml, { status: 200 }))` evaluates the constructor once at setup and hands every call the SAME instance, so only the first `response.text()` / `.json()` succeeds; the rest throw `TypeError: Body is unusable: Body has already been read` from undici's `consumeBody`. Use `mockImplementation(async () => new Response(xml, { status: 200 }))` whenever the stub will be awaited more than once.
+
+The reason this is worth an entry rather than being self-evident: in the enrichment path the error is SWALLOWED. `fetchAndEnrich` in `src/server/utils/enrich-usenet-languages.ts` catches it, logs `'NZB fetch failed'` at warn, runs `tryTitleFallback` and writes a `fetch-failed` cache entry — so the run resolves normally and the visible symptom is an off-by-N `languagesDetected` / `nzbFetched` / result-count assertion, not a rejection pointing at the stub. Any catch-and-degrade consumer has the same property.
+
+`src/server/utils/enrich-usenet-languages.test.ts` uses the `mockImplementation` form throughout and is the reference. Applies to every suite stubbing `fetchWithSsrfRedirect` or `fetchWithTimeout` for a multi-candidate run — including the `#2573` describe in `src/server/routes/search-stream.test.ts`, which hit this on its first draft.
