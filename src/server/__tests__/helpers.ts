@@ -218,7 +218,19 @@ export function createMockDb(): Record<'select' | 'insert' | 'update' | 'delete'
   return db;
 }
 
-export function createMockLogger(): Record<string, Mock | string> {
+export interface MockLogger {
+  info: Mock;
+  warn: Mock;
+  error: Mock;
+  debug: Mock;
+  fatal: Mock;
+  trace: Mock;
+  child: Mock;
+  level: string;
+  silent: Mock;
+}
+
+export function createMockLogger(): MockLogger {
   return {
     info: vi.fn(),
     warn: vi.fn(),

@@ -1893,9 +1893,8 @@ describe('ImportService', () => {
       // Exact values, not expect.any(String): a matcher that accepts any string cannot tell a
       // correct savePath from `undefined`, and reading the mis-mapping off this log is the point.
       // `originalPath` is the pre-mapping join output, so it is platform-spelled — fold the actual.
-      // createMockLogger is typed Record<string, Mock | string>, so the narrowing is the caller's.
-      const refusal = (serviceLog.error as Mock).mock.calls
-        .find((c: unknown[]) => c[1] === 'Refusing automatic import — source path fails library containment');
+      const refusal = serviceLog.error.mock.calls
+        .find((c) => c[1] === 'Refusing automatic import — source path fails library containment');
       expect(refusal).toBeDefined();
       const fields = refusal![0] as Record<string, unknown>;
       expect({ ...fields, originalPath: String(fields.originalPath).split('\\').join('/') }).toMatchObject({

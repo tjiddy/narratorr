@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readdir, rm, realpath, symlink } from 'node:fs/promises';
-import { createMockLogger, createMockDb, mockDbChain, inject } from '../__tests__/helpers.js';
+import { createMockLogger, createMockDb, mockDbChain, inject, type MockLogger } from '../__tests__/helpers.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { EventSource } from '@shared/schemas/event-history.js';
@@ -55,7 +55,7 @@ interface CandidateRow {
 describe('#2099 merge boot recovery — settlement phase', () => {
   let libraryRoot: string;
   let db: ReturnType<typeof createMockDb>;
-  let log: Record<string, Mock | string>;
+  let log: MockLogger;
   let eventHistory: { create: Mock };
   let bookService: { getById: Mock };
   let settingsService: { get: Mock };
@@ -462,7 +462,7 @@ describe('#2099 merge boot recovery — settlement phase', () => {
 });
 
 describe('#2099 merge boot recovery — re-queue phase', () => {
-  let log: Record<string, Mock | string>;
+  let log: MockLogger;
 
   beforeEach(() => {
     vi.clearAllMocks();
