@@ -21,9 +21,7 @@ import { SSE_HEARTBEAT_FRAME, startHeartbeat, stopHeartbeat } from '../utils/sse
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 
 
-function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
-  reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
+const sseFrame = (event: string, data: unknown): string => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
 export async function searchStreamRoutes(
   app: FastifyInstance,
@@ -66,11 +64,23 @@ export async function searchStreamRoutes(
 
       const session = sessionManager.create(enabledIndexers);
 
+      // The one gate every post-hijack write passes through, heartbeat included. It has to cover
+      // the SUCCESS arm too: post-processing degrades rather than rejecting under an abort, so a
+      // run abandoned mid-enrichment still arrives at the terminal frame with real results in hand.
+      let disconnected = false;
+      const writeFrame = (frame: string): void => {
+        if (disconnected) return;
+        reply.raw.write(frame);
+      };
+      const emit = (event: string, data: unknown): void => {
+        writeFrame(sseFrame(event, data));
+      };
+
       const startEvent: SearchStartEvent = {
         sessionId: session.sessionId,
         indexers: enabledIndexers,
       };
-      writeSSE(reply, 'search-start', startEvent);
+      emit('search-start', startEvent);
 
       // Slow FlareSolverr searches can cross proxy idle cutoffs; named hb frames keep transport alive.
       // EventSource ignores the unmatched name here while broadcaster clients use it for liveness.
@@ -82,7 +92,7 @@ export async function searchStreamRoutes(
       heartbeatTimer = startHeartbeat(() => {
         // Timer callbacks have no caller; self-stop on broken-pipe or post-end writes.
         try {
-          reply.raw.write(SSE_HEARTBEAT_FRAME);
+          writeFrame(SSE_HEARTBEAT_FRAME);
         } catch {
           stopHeartbeatTimer();
         }
@@ -108,6 +118,11 @@ export async function searchStreamRoutes(
       };
 
       request.raw.on('close', () => {
+        // Flag BEFORE the abort: abort listeners run synchronously inside abort(), so anything
+        // reachable from one must already see the socket as unwritable. Clearing the timer without
+        // aborting would leave the run with nothing to tear it — strictly worse than an expiry.
+        disconnected = true;
+        deadline.abort();
         clearDeadline();
         stopHeartbeatTimer();
         sessionManager.cleanup(session.sessionId);
@@ -131,16 +146,16 @@ export async function searchStreamRoutes(
               onComplete: (indexerId, name, resultCount, elapsedMs) => {
                 succeeded++;
                 const event: IndexerCompleteEvent = { indexerId, name, resultCount, elapsedMs };
-                writeSSE(reply, 'indexer-complete', event);
+                emit('indexer-complete', event);
               },
               onError: (indexerId, name, error, elapsedMs) => {
                 if (!policy.claimReport(indexerId)) return;
                 const event: IndexerErrorEvent = { indexerId, name, error, elapsedMs };
-                writeSSE(reply, 'indexer-error', event);
+                emit('indexer-error', event);
               },
               onCancelled: (indexerId, name) => {
                 const event: IndexerCancelledEvent = { indexerId, name };
-                writeSSE(reply, 'indexer-cancelled', event);
+                emit('indexer-cancelled', event);
               },
             },
             deadline.signal,
@@ -156,20 +171,24 @@ export async function searchStreamRoutes(
         // Disclose relaxation only with displayed results: relaxedQuery implies results is non-empty.
         const relaxed = ran.index > 0 && processed.results.length > 0;
         const payload: SearchResponsePayload = relaxed ? { ...processed, relaxedQuery: ran.rung.query } : processed;
-        writeSSE(reply, 'search-complete', payload);
+        emit('search-complete', payload);
       } catch (error: unknown) {
         const fallback = { results: [], durationUnknown: true, unsupportedResults: { count: 0, titles: [] } };
         // The verdict is the closure flag, never the caught value: `abortReason` surfaces the first
         // rejected leg's reason, an ordinary adapter error indistinguishable from a real failure.
         // Attached on this arm only, so a timer that fires while post-processing runs cannot
         // falsify an answer the ladder already produced.
-        if (expired) {
+        if (disconnected) {
+          // First arm deliberately: a run that expired AND was abandoned trades its budget warn for
+          // one log line per terminated run and one place deciding the socket is unwritable.
+          request.log.debug({ error: serializeError(error) }, 'Search stream abandoned by client');
+        } else if (expired) {
           // `budgetMs` rides as a sibling; serializeError emits a fixed key set that would drop it.
           request.log.warn({ budgetMs: SEARCH_DEADLINE_MS, error: serializeError(error) }, 'Search stream deadline exceeded');
-          writeSSE(reply, 'search-complete', { ...fallback, timedOut: true });
+          emit('search-complete', { ...fallback, timedOut: true });
         } else {
           request.log.error({ error: serializeError(error) }, 'Search stream error');
-          writeSSE(reply, 'search-complete', fallback);
+          emit('search-complete', fallback);
         }
       } finally {
         clearDeadline();
