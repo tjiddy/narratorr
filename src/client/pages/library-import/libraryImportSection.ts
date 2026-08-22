@@ -1,4 +1,6 @@
-import type { DiscoveredBook, DuplicateReason } from '@/lib/api';
+import type { DiscoveredBook } from '@/lib/api';
+
+type DuplicateReason = NonNullable<DiscoveredBook['duplicateReason']>;
 
 /** Where a discovered row renders. Deliberately NOT an eligibility signal — see below. */
 export type LibraryImportSection = 'new' | 'duplicate-copy' | 'existing-path';

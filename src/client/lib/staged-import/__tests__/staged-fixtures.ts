@@ -1,5 +1,6 @@
 import type { Mock } from 'vitest';
 import type { SubmissionResponse, SubmissionAggregates, StagedItemResultDto } from '@/lib/api';
+import type { ImportSkipReason } from '@shared/schemas/library-scan.js';
 
 // Polling starts immediately, so complete summaries drive terminal fixtures without fake timers.
 
@@ -47,7 +48,7 @@ export const acceptedRow = (ordinal: number, path: string, title = 'T'): StagedI
   ({ disposition: 'accepted', ordinal, path, title, bookId: ordinal + 1 });
 export const heldRow = (ordinal: number, path: string, title = 'T'): StagedItemResultDto =>
   ({ disposition: 'held', ordinal, path, title, reason: 'recording-review-required' });
-export const skippedRow = (ordinal: number, path: string, title = 'T', reason: 'already-in-library' | 'already-importing' = 'already-in-library'): StagedItemResultDto =>
+export const skippedRow = (ordinal: number, path: string, title = 'T', reason: ImportSkipReason = 'already-in-library'): StagedItemResultDto =>
   ({ disposition: 'skipped', ordinal, path, title, reason });
 export const failedRow = (ordinal: number, path: string, title = 'T'): StagedItemResultDto =>
   ({ disposition: 'failed', ordinal, path, title, message: 'boom' });

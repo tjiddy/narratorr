@@ -23,7 +23,9 @@ export interface SkipSummaryRow {
 }
 
 export function importSkipSummary(skipped: readonly SkipSummaryRow[]): string {
-  const owned = skipped.filter(s => s.reason === 'already-in-library');
+  // #2091's reason is a narrowing of already-in-library, not a third class: both mean the library
+  // already holds the recording, so the summary pools them rather than dropping the new one.
+  const owned = skipped.filter(s => s.reason === 'already-in-library' || s.reason === 'duplicate-copy-at-other-path');
   const importing = skipped.filter(s => s.reason === 'already-importing');
 
   const parts: string[] = [];
