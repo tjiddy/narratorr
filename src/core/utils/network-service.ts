@@ -307,6 +307,12 @@ export interface FetchWithSsrfRedirectOptions {
    * hostname-only allowlist for socket-time defense in depth.
    */
   lanAllowlist?: Set<string>;
+  /**
+   * Composed with—never substituted for—the per-hop timeout, and re-checked before each hop's
+   * un-timed DNS resolution, so an abandoned caller pays at most the hop already in flight rather
+   * than `maxHops + 1` of them. Explicitly `| undefined` so an eopt caller can spread one in.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 async function resolveRedirectTarget(response: Response, currentUrl: string, parsed: URL): Promise<string> {
@@ -349,7 +355,7 @@ export async function fetchWithSsrfRedirect(
   startUrl: string,
   opts: FetchWithSsrfRedirectOptions = {},
 ): Promise<Response> {
-  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist, headers = {} } = opts;
+  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist, headers = {}, signal } = opts;
   const startOrigin = new URL(startUrl).origin;
   const visited = new Set<string>();
   let currentUrl = startUrl;
@@ -360,15 +366,21 @@ export async function fetchWithSsrfRedirect(
     }
     visited.add(currentUrl);
 
+    // Ahead of the lookup, which takes no signal and has no timeout of its own: an abort landing
+    // between hops must cost neither a DNS resolution nor a socket. Rejects with the abort's own
+    // reason so callers can still tell a deadline from an expired per-hop timeout.
+    if (signal?.aborted) throw signal.reason;
+
     const parsed = new URL(currentUrl);
     await resolveAndValidate(parsed.hostname, {
       ...(lanAllowlist && { lanAllowlist }),
       normalizedHostPort: normalizedHostPortFromUrl(parsed),
     });
 
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const fetchOptions: DispatcherFetchInit = {
       redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
       dispatcher,
       headers: stripCrossOriginCredentialHeaders(headers, parsed.origin !== startOrigin),
     };
