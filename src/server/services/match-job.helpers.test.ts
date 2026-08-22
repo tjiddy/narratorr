@@ -1387,6 +1387,9 @@ describe('applyLibraryDuplicate', () => {
     const out = await applyLibraryDuplicate(input, bookService, log);
 
     expect(out).toEqual(input);
+    // #2091 AC22: fail-open means unflagged, so the row cannot reach the review-list section.
+    expect(out.isDuplicate).toBeUndefined();
+    expect(out).not.toHaveProperty('existingPath');
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/downloads/Tehanu' }),
       'Post-match duplicate check failed — proceeding without flag',

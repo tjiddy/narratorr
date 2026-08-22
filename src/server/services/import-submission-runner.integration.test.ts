@@ -8,6 +8,7 @@ import { books, importJobs, importSubmissions, importSubmissionItems, seriesMemb
 import { createHash, randomUUID } from 'node:crypto';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
+import { OwnedRecordingError } from './book-dedup.js';
 import { BookImportService } from './book-import.service.js';
 import { ImportSubmissionRunner } from './import-submission-runner.js';
 import { ImportStagingService } from './import-staging.service.js';
@@ -589,8 +590,11 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(await db.select().from(importJobs)).toHaveLength(0);
     });
 
+    // #2091 AC14: the incumbent deliberately HOLDS a file at a different path, so a branch that
+    // wrongly reused the confirm-time classification would show up as a copy-at-other-path here.
+    // A pathless incumbent would make the existing_path assertion vacuous.
     it('same-ASIN create-time race → skipped(already-in-library) with incumbent (F2, real DB unique index)', async () => {
-      const incId = await seedBook({ title: 'Owner', asin: 'B0RACE1' });
+      const incId = await seedBook({ title: 'Owner', asin: 'B0RACE1', path: '/library/Owner' });
       const subId = await seedProcessing([{ path: '/a', title: 'A', forceImport: true, metadata: { title: 'A', authors: [{ name: 'X' }], asin: 'B0RACE1' } }]);
 
       await drainRunner(makeRunner(new BookService(db, inject(log))));
@@ -600,7 +604,27 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(item!.reason).toBe('already-in-library');
       expect(item!.existingBookId).toBe(incId);
       expect(item!.existingTitle).toBe('Owner');
+      expect(item!.existingPath).toBeNull();
       expect(await db.select().from(books)).toHaveLength(1);
+      expect(await db.select().from(importJobs)).toHaveLength(0);
+    });
+
+    it('OwnedRecordingError from create → skipped(already-in-library) with no path snapshot (#2091 AC14)', async () => {
+      const incId = await seedBook({ title: 'Owner', path: '/library/Owner' });
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'createResolved').mockRejectedValueOnce(
+        new OwnedRecordingError({ existingBookId: incId, title: 'Owner', reason: 'same-recording' }),
+      );
+      const subId = await seedProcessing([acceptedItem('/a', 'A')]);
+
+      await drainRunner(makeRunner(bs));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item).toMatchObject({
+        disposition: 'skipped', reason: 'already-in-library', existingBookId: incId, existingTitle: 'Owner',
+      });
+      // The typed error carries no path, and the runner must not go looking for one.
+      expect(item!.existingPath).toBeNull();
       expect(await db.select().from(importJobs)).toHaveLength(0);
     });
 
