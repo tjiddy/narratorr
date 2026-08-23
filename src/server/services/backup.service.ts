@@ -5,8 +5,10 @@ import os from 'os';
 import { ZipArchive } from 'archiver';
 import unzipper from 'unzipper';
 import { createClient } from '@libsql/client';
+import { sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Readable } from 'stream';
+import type { Db } from '@db/index.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -46,6 +48,7 @@ export class BackupService {
     private dbPath: string,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
+    private db: Db,
     private maxRestoreDbSize: number = MAX_UNCOMPRESSED_DB_SIZE,
   ) {}
 
@@ -92,16 +95,18 @@ export class BackupService {
     return this._pendingRestore;
   }
 
+  /**
+   * Reads through the shared connection. A transient second connection to the live database file,
+   * opened and closed while the long-lived one is in flight, is a use-after-free-shaped hazard in the
+   * native binding and this one bought nothing (#2595 AC9).
+   */
   private async getAppMigrationCount(): Promise<number> {
-    const client = createClient({ url: `file:${this.dbPath}` });
     try {
-      const result = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
-      return Number(result.rows[0]!.count);
+      const rows = await this.db.all(sql`SELECT COUNT(*) as count FROM __drizzle_migrations`) as { count: number }[];
+      return Number(rows[0]!.count);
     } catch {
       this.log.warn('Could not query app migration count, assuming 0');
       return 0;
-    } finally {
-      client.close();
     }
   }
 
@@ -119,6 +124,8 @@ export class BackupService {
     const tempDbPath = path.join(this.configPath, `backup-temp-${timestamp}.db`);
 
     try {
+      // Stays a separate connection: VACUUM is illegal inside a transaction and the shared
+      // connection may have one open (#2595 AC11).
       const client = createClient({ url: `file:${this.dbPath}` });
       try {
         const escapedPath = tempDbPath.replace(/'/g, "''");
@@ -358,6 +365,7 @@ export class BackupService {
     const appMigrationCount = await this.getAppMigrationCount();
 
     try {
+      // A different file — the uploaded temp DB — so the shared connection cannot serve it (#2595 AC11).
       const client = createClient({ url: `file:${tempPath}` });
       try {
         const tableCheck = await client.execute(

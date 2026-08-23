@@ -145,7 +145,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const renameService = new RenameService(db, book, settings, log, eventHistory, connector);
   const retryBudget = new RetryBudget();
   const searchLadderCooldown = new SearchLadderCooldown();
-  const backup = new BackupService(config.configPath, config.dbPath, settings, log);
+  const backup = new BackupService(config.configPath, config.dbPath, settings, log, db);
   const importList = new ImportListService(db, log, book, metadata, {
     indexerSearchService: indexerSearch,
     indexerService: indexer,
