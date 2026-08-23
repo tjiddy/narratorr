@@ -3935,3 +3935,33 @@ The reason this is worth an entry rather than being self-evident: in the enrichm
 **Consequence 2 — the requested-ASIN override needs threading.** The upstream collapse calls `selectCanonicalRecording(bucket, undefined)`. Left alone it discards the very edition `resolveBook({ asin })` was told to prefer, defeating the `selectCanonicalRecording(exact, input.asin)` override downstream. `applyBookFilters(books, preferAsin)` exists solely to carry `input.asin` down; do not "simplify" the parameter away.
 
 **Testing implication.** A resolver-collapse test whose fixtures are identical listings silently stops testing the resolver. Pin the branch with a member carrying `BUCKET_SPLIT = { formatType: 'unabridged' }` — `formatType` is in neither `isCollapseEligible` nor `RICHNESS_STRINGS`, so it splits the bucket without perturbing eligibility or the richness ranking. See the `#2219` describe in `metadata.service.test.ts` and `enrichment-ambiguous-window.integration.test.ts`, which now observes `DUPLICATE_EDITIONS_COLLAPSED` rather than `AMBIGUOUS_WINDOW_COLLAPSED` for the identical-twin specimen while its durable-row assertions are unchanged. An instance of [[vacuous-assertion-observation-points]].
+
+## libsql-statement-execution-is-synchronous
+
+**source:** #2595  
+**added:** 2026-08-23  
+**files:** src/db/client.ts  
+**tags:** libsql, drizzle, concurrency, event-loop, sigsegv
+
+---
+
+**Statement execution in the pinned libsql binding is SYNCHRONOUS and blocks the event loop for its whole duration.** Measured against @libsql/client 0.17.4 / libsql 0.5.29 / drizzle-orm 0.45.2 in #2595 and pinned by `src/db/statement-execution-model.integration.test.ts`; full write-up in `docs/crash-forensics.md` §7.
+
+`Sqlite3Client.execute` and `Sqlite3Transaction.execute` are `async` but await nothing — both call the synchronous better-sqlite3-style `stmt.all()`/`stmt.run()` of the `libsql` npm package. `src/` has no `worker_threads`, so there is one JS thread issuing them.
+
+The readings, with a 400k–1M row recursive-CTE workload:
+
+| Observable | Reading |
+|---|---|
+| 247 ms statement, event-loop ticks during it | **0** (idle window of the same length: 143,120) |
+| Two statements via `Promise.all` | **505 ms** = 1.03 × the 488 ms sum; `max()` would be 245 ms |
+| Synchronous enter→exit span of a 249 ms statement | 249 ms |
+| All three through a `tx` handle | identical |
+
+**Consequence: do not add a JS-level serialization lane around `client.execute` / `client.batch` / `client.transaction`.** Two statements are never inside the binding at once, so a lane reorders scheduling and removes ZERO native overlap. `createDb` (`src/db/client.ts`) carries a comment saying so. This is the exact proposal #2595 was opened to build and the measurement is what killed it — check the measurement before re-proposing it, and re-run the test before trusting this entry after a driver bump (every assertion in it is written to red rather than pass quietly if execution becomes genuinely asynchronous).
+
+**What it does NOT rule out:** the SIGSEGV itself. A use-after-free inside the binding needs no second simultaneous caller.
+
+**The number that misleads.** A 50-operation wave through real service code recorded peak **40** promises in flight at the JS layer and peak **1** statement inside the binding. A concurrency audit reading only the first figure concludes there is contention to serialize; there is not. The remaining in-repo lever is peak statement *churn* (117 statements for 50 operations), not statement concurrency.
+
+**Two test-design traps this measurement had to dodge.** (1) An `await`-based `execute` wrapper reports false overlap for any async facade. Record enter/exit **synchronously** around the call (`record enter; const p = orig(...); record exit; return p`) and read the **span** — the *order* `enterA,exitA,enterB,exitB` is identical for a sync and an async driver, so only the span discriminates. (2) A single-sample sum-vs-max ratio is flaky under full-suite load, which inflates the two sides unevenly; sample both with repeated best-of and assert `both > one * 1.6`. Related: [[drizzle-tx-statements-bypass-client-spy]] (why `client.transaction` must be patched too), [[libsql-transactions-serialized-at-the-connection]] (the transaction-level constraint, which is a different fact), [[vacuous-assertion-observation-points]] (the counterfactual stub that proves the probe can detect overlap).
