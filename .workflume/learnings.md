@@ -3965,3 +3965,25 @@ The readings, with a 400k–1M row recursive-CTE workload:
 **The number that misleads.** A 50-operation wave through real service code recorded peak **40** promises in flight at the JS layer and peak **1** statement inside the binding. A concurrency audit reading only the first figure concludes there is contention to serialize; there is not. The remaining in-repo lever is peak statement *churn* (117 statements for 50 operations), not statement concurrency.
 
 **Two test-design traps this measurement had to dodge.** (1) An `await`-based `execute` wrapper reports false overlap for any async facade. Record enter/exit **synchronously** around the call (`record enter; const p = orig(...); record exit; return p`) and read the **span** — the *order* `enterA,exitA,enterB,exitB` is identical for a sync and an async driver, so only the span discriminates. (2) A single-sample sum-vs-max ratio is flaky under full-suite load, which inflates the two sides unevenly; sample both with repeated best-of and assert `both > one * 1.6`. Related: [[drizzle-tx-statements-bypass-client-spy]] (why `client.transaction` must be patched too), [[libsql-transactions-serialized-at-the-connection]] (the transaction-level constraint, which is a different fact), [[vacuous-assertion-observation-points]] (the counterfactual stub that proves the probe can detect overlap).
+
+## await-invalidatequeries-deadlocks-held-refetch
+
+**source:** #2592  
+**added:** 2026-08-22  
+**files:** src/client/components/book/FixSeriesModal.test.tsx  
+**tags:** react-query, vitest, test-observability, testing-library
+
+---
+
+TanStack Query v5's `invalidateQueries()` returns a promise that resolves only once the refetch it provokes has settled. That collides directly with this repo's standard deferred-mock idiom for loading/race tests ([[widened-invalidation-reopens-optimistic-cancel-window]], [[placeholderdata-scoped-to-query-key]]): if the refetch is served by `mockReturnValue(new Promise(() => {}))`, then `await act(async () => { await qc.invalidateQueries({ queryKey }) })` never resolves and the test reds with 'Test timed out in 5000ms'.
+
+Fire it without awaiting, and take the observation point from the cache instead of from the invalidation promise:
+
+```ts
+act(() => { void queryClient.invalidateQueries({ queryKey: searchKey }); });
+await waitFor(() => expect(queryClient.getQueryState(searchKey)?.fetchStatus).toBe('fetching'));
+```
+
+**The symptom points away from the cause.** After the timeout, later `it` blocks in the SAME file render an empty `document.body` — RTL prints just the bare container `<div />` — so untouched pre-existing tests fail with 'Unable to find role=dialog'. That reads as shared-state pollution and sends you hunting for a leaking global. Diagnose it by running the suspect test alone with `-t`: if it passes in isolation, the earlier timeout is the cause. Note also that `console.log` inside a vitest test is intercepted by default; probe output needs `--disable-console-intercept`.
+
+Reference: `src/client/components/book/FixSeriesModal.test.tsx`, 'keeps the rendered candidates during a background refetch of the same key' (#2592). Distinct from [[react-query-optimistic-cancel]], which covers `invalidateQueries`' `cancelRefetch: true` default rather than its return promise.
