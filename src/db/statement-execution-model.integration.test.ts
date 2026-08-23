@@ -55,6 +55,16 @@ interface Occupancy<T> {
 }
 
 /**
+ * Heartbeat loops that are still rearming themselves. A loop deregisters only when it observes its
+ * own stop flag, so this counter tracks the real thing a leak would leave behind rather than merely
+ * echoing the line that sets the flag.
+ */
+let liveHeartbeats = 0;
+
+/** Settles once every heartbeat that was asked to stop has actually run and deregistered. */
+const drainHeartbeats = () => new Promise((resolve) => setImmediate(resolve));
+
+/**
  * Runs `fn` with a self-rearming `setImmediate` loop live and counts the ticks it managed during the
  * call, then repeats the measurement over an idle window of the same length. A synchronous native
  * call cannot yield, so it reads zero; the idle figure proves the loop was running and would have
@@ -65,19 +75,27 @@ async function measureOccupancy<T>(fn: () => Promise<T>): Promise<Occupancy<T>> 
     let ticks = 0;
     let running = true;
     const beat = () => {
-      if (!running) return;
+      if (!running) {
+        liveHeartbeats--;
+        return;
+      }
       ticks++;
       setImmediate(beat);
     };
+    liveHeartbeats++;
     setImmediate(beat);
     // Let the loop reach steady state before the window opens.
     await new Promise((resolve) => setImmediate(resolve));
     const before = ticks;
     const startedAt = performance.now();
-    const value = await body();
-    const durationMs = performance.now() - startedAt;
-    running = false;
-    return { value, durationMs, ticksDuring: ticks - before };
+    try {
+      const value = await body();
+      return { value, durationMs: performance.now() - startedAt, ticksDuring: ticks - before };
+    } finally {
+      // In `finally`, not after the await: a rejecting body would otherwise leave `beat` rearming
+      // itself forever, turning an intended red into a worker that spins instead of failing.
+      running = false;
+    }
   };
 
   const measured = await run(fn);
@@ -144,12 +162,10 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
   });
 
   afterAll(() => {
-    // libSQL may retain the directory handle on Windows.
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch (error) {
-      if (process.platform !== 'win32') throw error;
-    }
+    // Close before removing: Windows keeps the DB file locked until the client closes, which is the
+    // same reason migrate.ts closes in a `finally`.
+    db.$client.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   describe('A1 — event-loop occupancy', () => {
@@ -174,6 +190,16 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
 
       expect(measured.durationMs).toBeGreaterThan(0);
       expect(measured.ticksDuring).toBe(0);
+    });
+
+    it('stops the heartbeat when the measured statement rejects', async () => {
+      // A driver or SQL regression makes the probe reject. The heartbeat must come down with it —
+      // otherwise the intended red is replaced by a worker spinning on setImmediate forever.
+      await expect(measureOccupancy(() => client.execute('SELECT * FROM no_such_table')))
+        .rejects.toThrow(/no such table/);
+
+      await drainHeartbeats();
+      expect(liveHeartbeats).toBe(0);
     });
   });
 
@@ -296,79 +322,111 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
   });
 });
 
-/** Peak statements the JS layer had outstanding at once, and how many were ever inside the binding together. */
 interface WaveMeasurement {
   totalStatements: number;
   clientStatements: number;
   transactionStatements: number;
   transactionsOpened: number;
-  peakPromisesInFlight: number;
-  peakNativeOverlap: number;
+  /** Peak statements outstanding at the JS layer, counted enter → settlement. */
+  peakStatementsInFlight: number;
+  /** Wall time the process spent inside statement call frames. */
+  bindingOccupancyMs: number;
+  /** `bindingOccupancyMs / wallTimeMs`. Near 1 when the binding blocks; near 0 when it does not. */
+  bindingOccupancyRatio: number;
+  /** Longest single uninterruptible block — the event loop could not turn for this long. */
+  maxBlockMs: number;
   wallTimeMs: number;
 }
 
+type WaveTarget = Executor & { transaction: (...args: never[]) => Promise<Executor> };
+
 /**
- * Counts both quantities at once so the difference between them is visible in one reading:
- * `peakPromisesInFlight` is what a JS-level concurrency audit sees, `peakNativeOverlap` is how many
- * statements were ever simultaneously inside the binding. Patches `client.transaction` as well as
- * `client.execute` — a client-only spy counts in-transaction statements zero times and would make
- * the peak figure vacuous.
+ * The share of wall time the process must have spent blocked inside statement frames for the wave to
+ * count as serial. Measured, not guessed: the real client reads 0.49-0.50 across runs (the remaining
+ * half is drizzle query building and service JS between statements, not binding time) and the
+ * off-frame executor below reads 0.017-0.021. The floor sits ~2.4x under the real reading and ~10x
+ * over the counterfactual, so CI load — which inflates wall time and therefore pushes the real ratio
+ * DOWN — has room before it false-reds.
  */
-function measureWave(db: Db) {
-  type Handle = Executor & { transaction: (...args: never[]) => Promise<Executor> };
-  const client = db.$client as unknown as Handle;
-  const originalExecute = client.execute.bind(client);
-  const originalTransaction = client.transaction.bind(client);
+const WAVE_OCCUPANCY_FLOOR = 0.2;
+
+/** An executor with the shape a genuinely asynchronous driver would have: nothing runs in the caller's frame. */
+function asyncWaveTarget(): WaveTarget {
+  const executor = (): Executor => ({
+    execute: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { rows: [] };
+    },
+  });
+  return { ...executor(), transaction: async () => executor() };
+}
+
+/**
+ * The peak-in-flight figure alone cannot answer "how much overlap reached the binding": a counter
+ * incremented and decremented inside one synchronous frame can never exceed 1 on a single JS thread,
+ * so it reads 1 for a synchronous driver AND for an asynchronous one. Occupancy is the quantity that
+ * discriminates — how much of the wave's wall time the process spent blocked inside statement call
+ * frames. A synchronous binding drives that toward 1; an executor whose work happens off-frame drives
+ * it toward 0, which is what the counterfactual wave below demonstrates.
+ *
+ * Instruments `transaction` as well as `execute`, because drizzle dispatches in-transaction queries
+ * through the handle and a client-only probe counts them zero times.
+ */
+function measureWave(target: WaveTarget) {
+  const originalExecute = target.execute.bind(target);
+  const originalTransaction = target.transaction.bind(target);
 
   const captured: { scope: string }[] = [];
   const transactions: string[] = [];
-  let promisesInFlight = 0;
-  let nativeOverlap = 0;
-  let peakPromisesInFlight = 0;
-  let peakNativeOverlap = 0;
+  let inFlight = 0;
+  let peakStatementsInFlight = 0;
+  let bindingOccupancyMs = 0;
+  let maxBlockMs = 0;
 
-  function instrument(target: Executor, scope: string): void {
-    const inner = target.execute.bind(target);
-    target.execute = ((stmt: string) => {
+  function instrument(executor: Executor, scope: string): void {
+    const inner = executor.execute.bind(executor);
+    executor.execute = ((stmt: string) => {
       captured.push({ scope });
-      promisesInFlight++;
-      nativeOverlap++;
-      peakPromisesInFlight = Math.max(peakPromisesInFlight, promisesInFlight);
-      peakNativeOverlap = Math.max(peakNativeOverlap, nativeOverlap);
+      inFlight++;
+      peakStatementsInFlight = Math.max(peakStatementsInFlight, inFlight);
+      const enteredAt = performance.now();
       let pending: Promise<unknown>;
       try {
         pending = inner(stmt);
       } finally {
-        // Synchronous exit: whatever the binding did, it is done by the time the call returns.
-        nativeOverlap--;
+        const block = performance.now() - enteredAt;
+        bindingOccupancyMs += block;
+        maxBlockMs = Math.max(maxBlockMs, block);
       }
-      return pending.finally(() => { promisesInFlight--; });
+      return pending.finally(() => { inFlight--; });
     }) as Executor['execute'];
   }
 
-  instrument(client, 'client');
-  client.transaction = (async (...args: never[]) => {
+  instrument(target, 'client');
+  target.transaction = (async (...args: never[]) => {
     const tx = await originalTransaction(...args);
     const scope = `tx${transactions.length + 1}`;
     transactions.push(scope);
     instrument(tx, scope);
     return tx;
-  }) as Handle['transaction'];
+  }) as WaveTarget['transaction'];
 
   const startedAt = performance.now();
 
   return {
     finish(): WaveMeasurement {
       const wallTimeMs = performance.now() - startedAt;
-      client.execute = originalExecute;
-      client.transaction = originalTransaction;
+      target.execute = originalExecute;
+      target.transaction = originalTransaction;
       return {
         totalStatements: captured.length,
         clientStatements: captured.filter((entry) => entry.scope === 'client').length,
         transactionStatements: captured.filter((entry) => entry.scope !== 'client').length,
         transactionsOpened: transactions.length,
-        peakPromisesInFlight,
-        peakNativeOverlap,
+        peakStatementsInFlight,
+        bindingOccupancyMs,
+        bindingOccupancyRatio: bindingOccupancyMs / wallTimeMs,
+        maxBlockMs,
         wallTimeMs,
       };
     },
@@ -391,18 +449,15 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
   });
 
   afterAll(() => {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch (error) {
-      if (process.platform !== 'win32') throw error;
-    }
+    db.$client.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 
-  it('never has more than one statement inside the binding, however much the JS layer overlaps', async () => {
+  it('spends the wave blocked inside the binding, however much the JS layer overlaps', async () => {
     const log = { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} } as unknown as FastifyBaseLogger;
     const bookService = new BookService(db, log);
 
-    const wave = measureWave(db);
+    const wave = measureWave(db.$client as unknown as WaveTarget);
 
     // Order-50 operations through real service code: transactional creates, bare writes, and reads.
     await Promise.all(
@@ -418,15 +473,47 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
     const measurement = wave.finish();
 
     // The artifact itself — AC14 copies these into the PR body and the doc section.
-    console.info(`#2595 wave measurement: ${JSON.stringify(measurement)}`);
+    console.info(`#2595 wave measurement (real client): ${JSON.stringify(measurement)}`);
 
     // Non-vacuous: the wave really did run a heavy, transaction-bearing load.
     expect(measurement.totalStatements).toBeGreaterThan(50);
     expect(measurement.transactionsOpened).toBeGreaterThan(0);
     expect(measurement.transactionStatements).toBeGreaterThan(0);
-    // The JS layer overlaps freely...
-    expect(measurement.peakPromisesInFlight).toBeGreaterThan(1);
-    // ...and none of that overlap reaches the binding. This is the whole finding.
-    expect(measurement.peakNativeOverlap).toBe(1);
+    // The JS layer overlaps freely — this figure reads the same for a synchronous and an
+    // asynchronous driver, which is exactly why it cannot be the evidence on its own.
+    expect(measurement.peakStatementsInFlight).toBeGreaterThan(1);
+    // The discriminating reading: almost the entire wave was the process blocked inside statement
+    // frames, one at a time. The counterfactual wave below drives this same figure to ~0.
+    expect(measurement.bindingOccupancyRatio).toBeGreaterThan(WAVE_OCCUPANCY_FLOOR);
+  });
+
+  it('reports collapsed occupancy for an executor whose work genuinely happens off-frame', async () => {
+    // The counterfactual for the wave probe, not just for the single-statement probes: without it the
+    // occupancy assertion above could be true by construction rather than by measurement.
+    const target = asyncWaveTarget();
+    const wave = measureWave(target);
+
+    await Promise.all(
+      Array.from({ length: 50 }, (_, i) => i).map(async (i) => {
+        if (i % 5 === 0) {
+          const tx = await target.transaction();
+          await tx.execute(`INSERT INTO t VALUES (${i})`);
+          return;
+        }
+        return target.execute(`SELECT ${i}`);
+      }),
+    );
+
+    const measurement = wave.finish();
+    console.info(`#2595 wave measurement (async counterfactual): ${JSON.stringify(measurement)}`);
+
+    // Same statement volume, same transaction scopes, same JS-layer overlap...
+    expect(measurement.totalStatements).toBe(50);
+    expect(measurement.transactionsOpened).toBe(10);
+    expect(measurement.transactionStatements).toBe(10);
+    expect(measurement.peakStatementsInFlight).toBeGreaterThan(1);
+    // ...and yet the assertion the real wave passes is FALSE here. That is what makes it evidence.
+    expect(measurement.bindingOccupancyRatio).toBeLessThan(WAVE_OCCUPANCY_FLOOR);
+    expect(measurement.bindingOccupancyRatio).toBeLessThan(0.1);
   });
 });

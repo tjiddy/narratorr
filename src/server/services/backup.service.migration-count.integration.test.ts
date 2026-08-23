@@ -24,21 +24,29 @@ describe('BackupService app migration count — real DB', () => {
   const service = (target: Db) =>
     new BackupService(dir, dbPath, createMockSettingsService(), log, target);
 
+  const opened: Db[] = [];
+
+  /** Every real client goes through here so teardown can close it — an unclosed one keeps the DB file locked on Windows. */
+  function openDb(path: string): Db {
+    const instance = createDb(path);
+    opened.push(instance);
+    return instance;
+  }
+
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'backup-migration-count-'));
     dbPath = join(dir, 'narratorr.db');
     await runMigrations(dbPath);
-    db = createDb(dbPath);
+    db = openDb(dbPath);
     log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
   });
 
   afterEach(() => {
-    // libSQL may retain the directory handle on Windows.
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch (error) {
-      if (process.platform !== 'win32') throw error;
-    }
+    // Close first, then remove, and let a removal failure throw: a swallowed error here would hide a
+    // leaked client behind a silently retained temp tree.
+    for (const instance of opened) instance.$client.close();
+    opened.length = 0;
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('reads the real migration row count through the shared connection instead of opening its own', async () => {
@@ -75,8 +83,7 @@ describe('BackupService app migration count — real DB', () => {
   });
 
   it('warns and assumes zero when the shared connection has no __drizzle_migrations table', async () => {
-    const bareFile = join(dir, 'bare.db');
-    const bare = createDb(bareFile);
+    const bare = openDb(join(dir, 'bare.db'));
 
     const backupPath = join(dir, 'backup-copy.db');
     await fs.copyFile(dbPath, backupPath);

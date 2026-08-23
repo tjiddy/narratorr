@@ -257,19 +257,31 @@ A bounded 50-operation wave through real service code — transactional `BookSer
 bare inserts, and status reads — against a real migrated DB, instrumented on both `client.execute`
 and `client.transaction`:
 
-| Quantity | Reading |
-|----------|---------|
-| Total statements | 117 |
-| ...on the client | 70 |
-| ...inside transactions | 47 |
-| Transactions opened | 10 |
-| Peak promises in flight (JS layer) | 40 |
-| **Peak statements inside the binding** | **1** |
-| Wall time | 128 ms |
+| Quantity | Real client | Async counterfactual |
+|----------|-------------|----------------------|
+| Total statements | 117 (70 client / 47 in-transaction) | 50 (40 / 10) |
+| Transactions opened | 10 | 10 |
+| Peak statements in flight (JS layer) | 40 | 50 |
+| Binding occupancy | 62 ms | 0.15 ms |
+| **Binding occupancy ÷ wall time** | **0.49** | **0.02** |
+| Longest uninterruptible block | 3.0 ms | 0.05 ms |
+| Wall time | 126 ms | 6 ms |
 
-The gap between 40 and 1 is the whole finding: the application overlaps heavily at the JS layer, and
-none of that overlap reaches the binding. A concurrency audit that reads only the first figure
-concludes there is contention to serialize; there is not.
+**Read the ratio, not the peak.** "Peak statements simultaneously inside the binding" sounds like the
+number that settles this, but on a single JS thread it is 1 by construction — a counter incremented
+and decremented inside one synchronous call frame cannot exceed 1 for a synchronous driver *or* an
+asynchronous one, so it is not evidence. The same trap applies to peak-in-flight: 40 and 50 above are
+the same shape of overlap, and the JS layer overlaps identically either way.
+
+**Binding occupancy** is what discriminates: the share of the wave's wall time the process spent
+blocked inside statement call frames. The real client spends about half the wave unable to turn the
+event loop, in ~3 ms blocks, one statement at a time — the other half is drizzle query building and
+service JS *between* statements, not binding time. An executor whose work happens off-frame drives
+that ratio to ~0.02, and the assertion the real wave passes is false for it. That counterfactual runs
+in the same file, through the same probe.
+
+So the application overlaps heavily at the JS layer and none of it reaches the binding — but the
+evidence for that is the occupancy ratio, not a peak count.
 
 ### If the driver is ever bumped
 
