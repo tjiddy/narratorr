@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeDirTolerant } from '../__tests__/windows-fs.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
@@ -46,7 +47,8 @@ describe('BackupService app migration count — real DB', () => {
     // leaked client behind a silently retained temp tree.
     for (const instance of opened) instance.$client.close();
     opened.length = 0;
-    rmSync(dir, { recursive: true, force: true });
+    // Windows releases the libSQL handle lazily even after close (#2599's class) — tolerate it.
+    removeDirTolerant(dir);
   });
 
   it('reads the real migration row count through the shared connection instead of opening its own', async () => {

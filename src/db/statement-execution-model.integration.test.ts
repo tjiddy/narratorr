@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeDirTolerant } from '../server/__tests__/windows-fs.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
@@ -165,7 +166,8 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
     // Close before removing: Windows keeps the DB file locked until the client closes, which is the
     // same reason migrate.ts closes in a `finally`.
     db.$client.close();
-    rmSync(dir, { recursive: true, force: true });
+    // Windows releases the libSQL handle lazily even after close (#2599's class) — tolerate it.
+    removeDirTolerant(dir);
   });
 
   describe('A1 — event-loop occupancy', () => {
@@ -205,26 +207,27 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
 
   describe('A1 — two concurrent statements cost the sum, never the max', () => {
     it('takes approximately twice one statement, not approximately one', async () => {
-      // Repeated best-of rather than a single sample: a loaded CI box inflates individual runs
-      // unevenly, and comparing two inflated numbers against a ratio is how a timing test goes flaky.
-      // The least-contended sample of each is the honest one, and both sides are sampled the same way.
-      const bestOf = async (run: () => Promise<unknown>) => {
-        let best = Infinity;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const startedAt = performance.now();
-          await run();
-          best = Math.min(best, performance.now() - startedAt);
-        }
-        return best;
-      };
-
-      const one = await bestOf(() => client.execute(rowGenerator(WORKLOAD_ROWS, 'A')));
-      const both = await bestOf(() =>
+      // Repeated best-of, INTERLEAVED: min-of-N guards each side against outliers within its
+      // window, but sampling the sides in separate windows lets a sustained load shift between
+      // them skew the baseline — a fully-contended `one` window read 246ms against a quiet
+      // `both` window's 195ms under full-suite load, i.e. both < one, impossible under either
+      // driver model. Alternating attempts makes both minima come from the same load environment.
+      const oneRun = () => client.execute(rowGenerator(WORKLOAD_ROWS, 'A'));
+      const bothRun = () =>
         Promise.all([
           client.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
           client.execute(rowGenerator(WORKLOAD_ROWS, 'B')),
-        ]),
-      );
+        ]);
+      let one = Infinity;
+      let both = Infinity;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        let startedAt = performance.now();
+        await oneRun();
+        one = Math.min(one, performance.now() - startedAt);
+        startedAt = performance.now();
+        await bothRun();
+        both = Math.min(both, performance.now() - startedAt);
+      }
 
       expect(one).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
       // The discriminating assertion: real native overlap lands at ~1x, serial execution at ~2x.
@@ -450,7 +453,8 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
 
   afterAll(() => {
     db.$client.close();
-    rmSync(dir, { recursive: true, force: true });
+    // Windows releases the libSQL handle lazily even after close (#2599's class) — tolerate it.
+    removeDirTolerant(dir);
   });
 
   it('spends the wave blocked inside the binding, however much the JS layer overlaps', async () => {
