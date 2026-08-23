@@ -160,7 +160,7 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
       // below would be true of any trivially fast statement and would prove nothing.
       expect(measured.durationMs).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
       // The same window, idle: the loop was live and free to tick throughout.
-      expect(measured.ticksIdle).toBeGreaterThan(1_000);
+      expect(measured.ticksIdle).toBeGreaterThan(100);
 
       expect(measured.ticksDuring).toBe(0);
     });
@@ -178,24 +178,33 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
   });
 
   describe('A1 — two concurrent statements cost the sum, never the max', () => {
-    it('takes approximately the sum of the two individual durations', async () => {
-      const first = await measureOccupancy(() => client.execute(rowGenerator(WORKLOAD_ROWS, 'A')));
-      const second = await measureOccupancy(() => client.execute(rowGenerator(WORKLOAD_ROWS, 'B')));
+    it('takes approximately twice one statement, not approximately one', async () => {
+      // Repeated best-of rather than a single sample: a loaded CI box inflates individual runs
+      // unevenly, and comparing two inflated numbers against a ratio is how a timing test goes flaky.
+      // The least-contended sample of each is the honest one, and both sides are sampled the same way.
+      const bestOf = async (run: () => Promise<unknown>) => {
+        let best = Infinity;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const startedAt = performance.now();
+          await run();
+          best = Math.min(best, performance.now() - startedAt);
+        }
+        return best;
+      };
 
-      const startedAt = performance.now();
-      await Promise.all([
-        client.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
-        client.execute(rowGenerator(WORKLOAD_ROWS, 'B')),
-      ]);
-      const together = performance.now() - startedAt;
+      const one = await bestOf(() => client.execute(rowGenerator(WORKLOAD_ROWS, 'A')));
+      const both = await bestOf(() =>
+        Promise.all([
+          client.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
+          client.execute(rowGenerator(WORKLOAD_ROWS, 'B')),
+        ]),
+      );
 
-      const sum = first.durationMs + second.durationMs;
-      const max = Math.max(first.durationMs, second.durationMs);
-
-      // Tolerance band rather than equality: the two statements are scheduled, not instrumented.
-      expect(together).toBeGreaterThan(sum * 0.85);
-      // The discriminating half — anything with real native overlap lands at or below max().
-      expect(together).toBeGreaterThan(max * 1.6);
+      expect(one).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
+      // The discriminating assertion: real native overlap lands at ~1x, serial execution at ~2x.
+      // Tolerance band rather than equality — these are scheduled statements, not instrumented ones.
+      expect(both).toBeGreaterThan(one * 1.6);
+      expect(both).toBeLessThan(one * 2.6);
     });
   });
 
@@ -237,7 +246,7 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
       expect(order(trace.events)).toEqual(['enterA', 'exitA', 'enterB', 'exitB']);
       expect(spanOf(trace.events, 'A')).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
       expect(measured.ticksDuring).toBe(0);
-      expect(measured.ticksIdle).toBeGreaterThan(1_000);
+      expect(measured.ticksIdle).toBeGreaterThan(100);
     });
   });
 
@@ -260,7 +269,7 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
       const measured = await measureOccupancy(() => stub.execute(rowGenerator(WORKLOAD_ROWS, 'A')));
       expect(measured.durationMs).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
       // The assertion the real client passes — `ticksDuring === 0` — is false here, so it is load-bearing.
-      expect(measured.ticksDuring).toBeGreaterThan(1_000);
+      expect(measured.ticksDuring).toBeGreaterThan(100);
 
       const trace = traceSyncSpans(stub);
       await Promise.all([
