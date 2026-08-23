@@ -189,3 +189,92 @@ large file, and deletion is a remedy that is always available and cannot itself 
 
 Cores are exempt from the ceiling entirely: the ELF check settles a core of any size in 18 bytes, so
 a 40 GB core is fully covered by the two-core budget.
+
+## 7. The libsql statement execution model, and what it rules out (#2595)
+
+The seven SIGSEGVs of 2026-08 were core-confirmed inside
+`@libsql/linux-x64-musl@0.5.29/index.node`, always under heavy concurrent DB activity. The obvious
+mitigation — serialize statement execution in a JS lane at the client wrapper — assumes concurrent
+statement execution exists in this process. **It does not.** That verdict is a measurement, not a
+reading of the driver source, and it is pinned by
+`src/db/statement-execution-model.integration.test.ts`.
+
+### Method
+
+Three independent observables against a real migrated temp DB, with a recursive-CTE row generator as
+the workload (long enough to run far past an event-loop tick, no I/O of its own):
+
+1. **Event-loop occupancy.** A self-rearming `setImmediate` heartbeat, armed and warmed before the
+   call, counts ticks during the statement — then repeats over an idle window of the same length so
+   the reading has a calibration rather than a bare zero.
+2. **Sum vs max.** Two statements issued through `Promise.all`. Genuine overlap costs `max()`;
+   serial execution costs the sum.
+3. **Synchronous span.** `execute` wrapped to record enter/exit **synchronously around the call,
+   without awaiting it** — an `await`-based wrapper reports false overlap for any async facade. The
+   span measures how much of the statement happened inside the caller's own frame.
+
+Measured on both `client.execute` and a handle from `client.transaction()`. The transaction handle is
+not optional: drizzle dispatches in-transaction queries as `tx.execute` and never `client.execute`
+(`drizzle-orm@0.45.2 libsql/session.js`), so a client-only observation point reports zero statements
+for everything inside a transaction.
+
+### Numbers (`@libsql/client` 0.17.4 / `libsql` 0.5.29 / `drizzle-orm` 0.45.2)
+
+| Observable | Reading |
+|------------|---------|
+| 1M-row generator, duration | 247 ms |
+| Event-loop ticks during it | **0** |
+| Ticks in an idle window of the same length | 143,120 |
+| Two statements individually | 245 ms + 243 ms |
+| The same two via `Promise.all` | **505 ms** (1.03 × sum; `max()` would be 245 ms) |
+| Synchronous enter→exit span of a 249 ms statement | 249 ms |
+| Same three readings through a `tx` handle | identical |
+
+### Verdict
+
+**Statement execution in this binding is synchronous and blocks the event loop for its whole
+duration.** Two statements are never inside the native binding at the same time, on one connection or
+on a transaction handle, and `src/` has no `worker_threads` to create a second caller.
+
+- **Ruled out:** a JS-level serialization lane around `client.execute` / `client.batch` /
+  `client.transaction`. It would reorder scheduling and remove **zero** native overlap. `createDb`
+  (`src/db/client.ts`) carries a comment saying so, and no lane was added.
+- **Not ruled out:** the crash itself. A use-after-free inside the binding does not require two
+  simultaneous callers — the fault address in the 08-23 core was a garbage pointer containing ASCII
+  bytes. What the measurement removes is one candidate explanation, not the bug.
+- **Still in scope, and acted on:** connection lifetime. `BackupService.getAppMigrationCount` used to
+  open and `close()` a second connection to the **live** database file while the long-lived one was in
+  flight; it now reads through the shared `Db`. That is one removed variable and hygiene, not a
+  claimed fix — the default backup interval is weekly, so it cannot explain five crashes in fifteen
+  hours. The two remaining separate connections are justified in place: `create()`'s `VACUUM INTO`
+  (VACUUM is illegal inside a transaction) and `validateRestore` (a different file — the uploaded
+  temp DB).
+- **The remaining in-repo lever** is peak statement churn, not statement concurrency. See below.
+
+### Concurrent-wave measurement
+
+A bounded 50-operation wave through real service code — transactional `BookService.create` calls,
+bare inserts, and status reads — against a real migrated DB, instrumented on both `client.execute`
+and `client.transaction`:
+
+| Quantity | Reading |
+|----------|---------|
+| Total statements | 117 |
+| ...on the client | 70 |
+| ...inside transactions | 47 |
+| Transactions opened | 10 |
+| Peak promises in flight (JS layer) | 40 |
+| **Peak statements inside the binding** | **1** |
+| Wall time | 128 ms |
+
+The gap between 40 and 1 is the whole finding: the application overlaps heavily at the JS layer, and
+none of that overlap reaches the binding. A concurrency audit that reads only the first figure
+concludes there is contention to serialize; there is not.
+
+### If the driver is ever bumped
+
+Re-run `src/db/statement-execution-model.integration.test.ts`. Every assertion in it is written to go
+**red** rather than pass quietly if execution becomes genuinely asynchronous, and the file carries a
+counterfactual — the same probes against a stub client that really awaits — so the absence readings
+are known to be capable of reporting a presence. A red there means this section is stale and the
+serialization question is genuinely open again.
