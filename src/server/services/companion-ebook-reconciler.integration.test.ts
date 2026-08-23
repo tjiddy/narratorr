@@ -79,8 +79,9 @@ describe('CompanionEbookReconciler end-to-end (#1959)', () => {
 
   afterEach(async () => {
     await reconciler.stop();
+    // Close before removal: libSQL holds the DB file open until the client closes (#2599).
+    db.$client.close();
     await chmod(bookDir, 0o755).catch(() => undefined);
-    // Windows may retain the libSQL handle and reject immediate directory deletion.
     removeDirTolerant(dir);
   });
 
