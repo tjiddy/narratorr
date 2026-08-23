@@ -13,16 +13,20 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
   let dir: string;
   let dbFile: string;
   let db: Db;
+  /** Both this suite's connections, closed before removal — the second one is opened mid-test below. */
+  const opened: Db[] = [];
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'serial-tx-'));
     dbFile = join(dir, 'narratorr.db');
     await runMigrations(dbFile);
     db = createDb(dbFile);
+    opened.push(db);
   });
 
   afterAll(() => {
-    // libSQL may retain the directory handle on Windows.
+    // libSQL retains the directory handle on Windows until every client closes.
+    for (const instance of opened) instance.$client.close();
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch (error) {
@@ -158,6 +162,7 @@ describe('per-connection transaction serialization (#1959 F12)', () => {
     const otherFile = join(dir, 'other.db');
     await runMigrations(otherFile);
     const other = createDb(otherFile);
+    opened.push(other);
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });

@@ -415,6 +415,40 @@ describe('createServices', () => {
     expect(callOrder).toEqual(['v2', 'maxConcurrent']);
   });
 
+  // #2595 AC9: BackupService reads the app migration count through the connection it is handed, so
+  // handing it anything other than the composition root's long-lived Db silently reintroduces the
+  // second live connection to the database file. Both halves matter and neither is type-checkable:
+  // a different same-typed Db compiles, and so does a reordering of the two adjacent string args.
+  it('passes the composition root Db itself to BackupService, after configPath/dbPath/settings/log', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    const { BackupService } = await import('../services/backup.service.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    const services = await createServices(db, log);
+
+    const calls = vi.mocked(BackupService).mock.calls;
+    expect(calls).toHaveLength(1);
+    // Values pin the positional order (config is mocked at the top of this file); identity pins the
+    // connection, which is the half a same-typed replacement would otherwise pass.
+    expect(calls[0]).toEqual(['/tmp/config', '/tmp/db.sqlite', services.settings, log, db]);
+    expect(calls[0]![4]).toBe(db);
+  });
+
 
   // AC24 of #2530: the backfill must land before `startJobs` arms the import-list cron, and
   // `createServices` is the only place that ordering can be asserted structurally — `index.ts`
