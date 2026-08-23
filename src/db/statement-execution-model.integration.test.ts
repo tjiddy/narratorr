@@ -517,7 +517,8 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
     expect(measurement.transactionStatements).toBe(10);
     expect(measurement.peakStatementsInFlight).toBeGreaterThan(1);
     // ...and yet the assertion the real wave passes is FALSE here. That is what makes it evidence.
+    // Only the shared floor: a tighter hardcoded band adds no discrimination and flakes on loaded
+    // 2-core CI runners (measured 0.131 there vs 0.02 idle).
     expect(measurement.bindingOccupancyRatio).toBeLessThan(WAVE_OCCUPANCY_FLOOR);
-    expect(measurement.bindingOccupancyRatio).toBeLessThan(0.1);
   });
 });
