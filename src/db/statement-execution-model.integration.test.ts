@@ -206,34 +206,30 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
   });
 
   describe('A1 — two concurrent statements cost the sum, never the max', () => {
-    it('takes approximately twice one statement, not approximately one', async () => {
-      // Repeated best-of, INTERLEAVED: min-of-N guards each side against outliers within its
-      // window, but sampling the sides in separate windows lets a sustained load shift between
-      // them skew the baseline — a fully-contended `one` window read 246ms against a quiet
-      // `both` window's 195ms under full-suite load, i.e. both < one, impossible under either
-      // driver model. Alternating attempts makes both minima come from the same load environment.
-      const oneRun = () => client.execute(rowGenerator(WORKLOAD_ROWS, 'A'));
-      const bothRun = () =>
-        Promise.all([
+    it('fills the concurrent pair’s wall time with the two statements’ own spans', async () => {
+      // Within ONE window, never across two: every cross-window wall-clock formulation of this
+      // claim flaked on CI, where a second workflow runs this whole suite concurrently on a
+      // 2-core runner (separate-window best-of read both<one; interleaved best-of did too).
+      // Here numerator and denominator come from the same timeline, so a mid-span preemption
+      // charges both sides: serial execution fills the pair's wall with the two spans (~1.0),
+      // genuinely overlapping native work would exceed it (~2.0), an async driver leaves it
+      // empty (~0 — the A3 counterfactual below pins that this assertion can red).
+      const trace = traceSyncSpans(client);
+      const startedAt = performance.now();
+      try {
+        await Promise.all([
           client.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
           client.execute(rowGenerator(WORKLOAD_ROWS, 'B')),
         ]);
-      let one = Infinity;
-      let both = Infinity;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        let startedAt = performance.now();
-        await oneRun();
-        one = Math.min(one, performance.now() - startedAt);
-        startedAt = performance.now();
-        await bothRun();
-        both = Math.min(both, performance.now() - startedAt);
+      } finally {
+        trace.restore();
       }
+      const wall = performance.now() - startedAt;
+      const spanSum = spanOf(trace.events, 'A') + spanOf(trace.events, 'B');
 
-      expect(one).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
-      // The discriminating assertion: real native overlap lands at ~1x, serial execution at ~2x.
-      // Tolerance band rather than equality — these are scheduled statements, not instrumented ones.
-      expect(both).toBeGreaterThan(one * 1.6);
-      expect(both).toBeLessThan(one * 2.6);
+      expect(spanOf(trace.events, 'A')).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
+      expect(spanSum / wall).toBeGreaterThan(0.75);
+      expect(spanSum / wall).toBeLessThan(1.2);
     });
   });
 
@@ -312,15 +308,18 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
       expect(spanOf(trace.events, 'B')).toBeLessThan(OCCUPANCY_FLOOR_MS);
     });
 
-    it('reports max(), not sum(), for two concurrent asynchronous statements', async () => {
+    it('leaves the concurrent pair’s wall time empty of synchronous spans', async () => {
       const stub = asyncStub();
 
+      const trace = traceSyncSpans(stub);
       const startedAt = performance.now();
       await Promise.all([stub.execute(rowGenerator(1, 'A')), stub.execute(rowGenerator(1, 'B'))]);
-      const together = performance.now() - startedAt;
+      const wall = performance.now() - startedAt;
+      trace.restore();
 
-      // Two 60ms awaits overlapping land near 60ms, not 120ms — the sum assertion above would red.
-      expect(together).toBeLessThan(110);
+      // The span-fill assertion the real client passes (> 0.75) is false here — overlapping awaits
+      // spend their wall time off-frame, so the spans fill ~none of it.
+      expect((spanOf(trace.events, 'A') + spanOf(trace.events, 'B')) / wall).toBeLessThan(0.2);
     });
   });
 });
