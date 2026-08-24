@@ -338,6 +338,11 @@ interface WaveMeasurement {
   bindingOccupancyRatio: number;
   /** Longest single uninterruptible block — the event loop could not turn for this long. */
   maxBlockMs: number;
+  /**
+   * Median single-call span. Robust to OS preemption charging a scheduling quantum to a span
+   * (which corrupts a few samples, never a majority) — the sum/ratio figures are not.
+   */
+  medianBlockMs: number;
   wallTimeMs: number;
 }
 
@@ -385,6 +390,7 @@ function measureWave(target: WaveTarget) {
   let peakStatementsInFlight = 0;
   let bindingOccupancyMs = 0;
   let maxBlockMs = 0;
+  const blocks: number[] = [];
 
   function instrument(executor: Executor, scope: string): void {
     const inner = executor.execute.bind(executor);
@@ -400,6 +406,7 @@ function measureWave(target: WaveTarget) {
         const block = performance.now() - enteredAt;
         bindingOccupancyMs += block;
         maxBlockMs = Math.max(maxBlockMs, block);
+        blocks.push(block);
       }
       return pending.finally(() => { inFlight--; });
     }) as Executor['execute'];
@@ -430,6 +437,7 @@ function measureWave(target: WaveTarget) {
         bindingOccupancyMs,
         bindingOccupancyRatio: bindingOccupancyMs / wallTimeMs,
         maxBlockMs,
+        medianBlockMs: [...blocks].sort((a, b) => a - b)[Math.floor(blocks.length / 2)] ?? 0,
         wallTimeMs,
       };
     },
@@ -516,9 +524,12 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
     expect(measurement.transactionsOpened).toBe(10);
     expect(measurement.transactionStatements).toBe(10);
     expect(measurement.peakStatementsInFlight).toBeGreaterThan(1);
-    // ...and yet the assertion the real wave passes is FALSE here. That is what makes it evidence.
-    // Only the shared floor: a tighter hardcoded band adds no discrimination and flakes on loaded
-    // 2-core CI runners (measured 0.131 there vs 0.02 idle).
-    expect(measurement.bindingOccupancyRatio).toBeLessThan(WAVE_OCCUPANCY_FLOOR);
+    // ...and yet the probe reads ~nothing per call here. That is what makes it evidence: a broken
+    // (await-based) wrapper would read the full statement duration instead. Median, not the
+    // sum/ratio: on saturated 2-core CI runners (two workflows run this suite concurrently per
+    // push) the OS deschedules the process mid-span and charges whole scheduling quanta to a few
+    // samples — the ratio read 0.13 and then 0.43 there against a 0.02 idle baseline. A median of
+    // 50 spans needs 26 corrupted samples to move, which contention does not produce.
+    expect(measurement.medianBlockMs).toBeLessThan(1);
   });
 });
