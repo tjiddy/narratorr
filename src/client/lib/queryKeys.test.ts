@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
-import { queryKeys } from './queryKeys';
+import { queryKeys, isBookSeriesSearchKey } from './queryKeys';
 
 describe('queryKeys.libraryBooks (#1132)', () => {
   it('returns a tuple beginning with the `books` prefix', () => {
@@ -96,7 +96,9 @@ describe('queryKeys.singularBookRoot (#2541)', () => {
     expect(queryKeys.singularBookRoot()).toEqual(['book']);
   });
 
-  it('marks the series card and its in-flight member search invalidated', async () => {
+  // Raw TanStack prefix semantics only. Production no longer invalidates the bare root unfiltered:
+  // the status-event arm pairs it with the #2592 predicate, which spares the search subtree.
+  it('a bare, unfiltered root invalidation reaches the series card AND the member search', async () => {
     const qc = new QueryClient();
     qc.setQueryData(queryKeys.bookSeries(7), { series: null });
     qc.setQueryData(queryKeys.bookSeriesSearch(7, 'foo'), { candidates: [] });
@@ -137,5 +139,81 @@ describe('queryKeys.singularBookRoot (#2541)', () => {
     await qc.invalidateQueries({ queryKey: queryKeys.singularBookRoot() });
 
     expect(qc.getQueryState(retryKey)?.isInvalidated).toBe(true);
+  });
+});
+
+describe('isBookSeriesSearchKey (#2592)', () => {
+  const CASES: [readonly unknown[], boolean][] = [
+    [queryKeys.bookSeriesSearch(7, 'foo'), true],
+    // The key a disabled query still occupies while `submitted` is null.
+    [queryKeys.bookSeriesSearch(7, ''), true],
+    [['book', 7, 'series', 'search'], true],
+    [[], false],
+    [['book'], false],
+    [['book', 7], false],
+    [['book', 7, 'series'], false],
+    [['book', 7, 'retry-import-available'], false],
+    [['books', 7], false],
+    [['books', 7, 'files'], false],
+    [['books', 7, 'series', 'search', 'foo'], false],
+    [['activity'], false],
+    [['metadata', 'search', 'x'], false],
+  ];
+
+  it.each(CASES)('%j → %s', (key, expected) => {
+    expect(isBookSeriesSearchKey(key)).toBe(expected);
+  });
+
+  it('spares the search subtree while still invalidating the rest of the singular root', async () => {
+    const qc = new QueryClient();
+    const searchKey = queryKeys.bookSeriesSearch(7, 'foo');
+    const retryKey = ['book', 7, 'retry-import-available'];
+    qc.setQueryData(queryKeys.bookSeries(7), { series: null });
+    qc.setQueryData(searchKey, { candidates: [] });
+    qc.setQueryData(retryKey, { available: false });
+
+    await qc.invalidateQueries({
+      queryKey: queryKeys.singularBookRoot(),
+      predicate: (q) => !isBookSeriesSearchKey(q.queryKey),
+    });
+
+    expect(qc.getQueryState(queryKeys.bookSeries(7))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(retryKey)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(searchKey)?.isInvalidated).toBe(false);
+  });
+
+  // The predicate widens rather than narrows if the queryKey filter is ever dropped: every key
+  // outside the singular root satisfies `!isBookSeriesSearchKey`.
+  it('leaves every namespace outside the singular root alone when both filters are present', async () => {
+    const qc = new QueryClient();
+    const untouched = [
+      queryKeys.books(),
+      queryKeys.libraryBooks(),
+      queryKeys.book(7),
+      queryKeys.activity(),
+      queryKeys.eventHistory.byBookId(7),
+      queryKeys.metadata.book('x'),
+    ];
+    for (const key of untouched) qc.setQueryData(key, {});
+
+    await qc.invalidateQueries({
+      queryKey: queryKeys.singularBookRoot(),
+      predicate: (q) => !isBookSeriesSearchKey(q.queryKey),
+    });
+
+    for (const key of untouched) {
+      expect({ key, invalidated: qc.getQueryState(key)?.isInvalidated }).toEqual({ key, invalidated: false });
+    }
+  });
+
+  // AC4: the four mutation-driven call sites invalidate the base key directly and are untouched.
+  it('the base-key cascade to an active search survives the carve-out', async () => {
+    const qc = new QueryClient();
+    const searchKey = queryKeys.bookSeriesSearch(7, 'foo');
+    qc.setQueryData(searchKey, { candidates: [] });
+
+    await qc.invalidateQueries({ queryKey: queryKeys.bookSeries(7) });
+
+    expect(qc.getQueryState(searchKey)?.isInvalidated).toBe(true);
   });
 });

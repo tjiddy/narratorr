@@ -128,7 +128,9 @@ export function FixSeriesModal({ bookId, currentSeriesName, onClose }: FixSeries
             </div>
           )}
 
-          {search.isFetching ? (
+          {/* isLoading, not isFetching: no data yet for THIS query key. A background refetch of a
+              key that already has candidates must leave them on screen (#2592). */}
+          {search.isLoading ? (
             <div className="flex items-center justify-center py-8 text-muted-foreground">
               <LoadingSpinner className="w-5 h-5" />
             </div>

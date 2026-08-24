@@ -5,6 +5,8 @@ import path from 'path';
 import os from 'os';
 import { Readable } from 'stream';
 import { EventEmitter } from 'events';
+import { createClient } from '@libsql/client';
+import type { Db } from '@db/index.js';
 import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 import { removeTree } from '@core/utils/remove-tree.js';
@@ -42,6 +44,18 @@ vi.mock('@libsql/client', () => ({
   })),
 }));
 
+const mockDbAll = vi.fn();
+
+/**
+ * The shared connection BackupService reads the app migration count through (#2595 AC9). It is
+ * deliberately NOT the suite-wide `@libsql/client` double below, which now only serves the VACUUM and
+ * the uploaded temp DB — a case still asserting the app count against `mockExecute` is reading the
+ * wrong source and would pass whatever production did.
+ */
+function createMockDb(): Db {
+  return { all: mockDbAll } as unknown as Db;
+}
+
 function createMockLog() {
   return {
     info: vi.fn(),
@@ -74,6 +88,10 @@ async function createZipBuffer(entries: { name: string; content: Buffer }[]): Pr
 beforeEach(() => {
   vi.mocked(removeTree).mockReset();
   vi.mocked(removeTree).mockImplementation(actualRemoveTree.removeTree);
+  mockDbAll.mockReset();
+  // One migration by default — the count the majority of cases treat as "app and backup agree".
+  mockDbAll.mockResolvedValue([{ count: 1 }]);
+  vi.mocked(createClient).mockClear();
 });
 
 describe('BackupService', () => {
@@ -96,7 +114,7 @@ describe('BackupService', () => {
 
   describe('list', () => {
     it('returns empty array when no backups exist', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.list();
       expect(result).toEqual([]);
     });
@@ -112,7 +130,7 @@ describe('BackupService', () => {
       await new Promise(r => setTimeout(r, 50));
       await fs.writeFile(path.join(backupsDir, file2), 'data2');
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.list();
 
       expect(result).toHaveLength(2);
@@ -127,7 +145,7 @@ describe('BackupService', () => {
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), '');
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260102T000000000Z.zip'), 'data');
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.list();
 
       expect(result).toHaveLength(1);
@@ -141,7 +159,7 @@ describe('BackupService', () => {
       await fs.writeFile(path.join(backupsDir, 'other-file.zip'), 'data');
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), 'data');
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.list();
 
       expect(result).toHaveLength(1);
@@ -169,7 +187,7 @@ describe('BackupService', () => {
     });
 
     it('creates backup zip and returns metadata', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 12345 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
 
@@ -186,7 +204,7 @@ describe('BackupService', () => {
 
     it('escapes single quotes in VACUUM INTO path (doubles them for SQL literal safety)', async () => {
       const pathWithQuote = "/config/it's-a-path";
-      const service = new BackupService(pathWithQuote, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(pathWithQuote, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
 
@@ -200,7 +218,7 @@ describe('BackupService', () => {
     });
 
     it('VACUUM INTO path is built from controlled inputs only (configPath + timestamp)', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
 
@@ -215,7 +233,7 @@ describe('BackupService', () => {
     });
 
     it('rejects concurrent backup with "already in progress"', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
 
       const first = service.create();
@@ -228,7 +246,7 @@ describe('BackupService', () => {
     });
 
     it('cleans up temp file after successful backup', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
       const unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValue();
 
@@ -243,7 +261,7 @@ describe('BackupService', () => {
     it('cleans up on failure', async () => {
       mockExecute.mockRejectedValue(new Error('VACUUM failed'));
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValue();
 
       await expect(service.create()).rejects.toThrow('VACUUM failed');
@@ -258,7 +276,7 @@ describe('BackupService', () => {
     it('resets backupInProgress flag after failure', async () => {
       mockExecute.mockRejectedValueOnce(new Error('VACUUM failed'));
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValue();
 
       await expect(service.create()).rejects.toThrow('VACUUM failed');
@@ -287,7 +305,7 @@ describe('BackupService', () => {
         await new Promise(r => setTimeout(r, 20));
       }
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 3 } }), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 3 } }), createMockLog(), createMockDb());
       const deleted = await service.prune();
 
       expect(deleted).toBe(2);
@@ -310,7 +328,7 @@ describe('BackupService', () => {
         .mockResolvedValueOnce(undefined as never);
 
       const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
-      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 2 } }), mockLog as never);
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 2 } }), mockLog as never, createMockDb());
       const deleted = await service.prune();
 
       expect(deleted).toBe(1);
@@ -329,7 +347,7 @@ describe('BackupService', () => {
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), 'data1');
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260102T000000000Z.zip'), 'data2');
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 3 } }), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 3 } }), createMockLog(), createMockDb());
       const deleted = await service.prune();
 
       expect(deleted).toBe(0);
@@ -338,30 +356,30 @@ describe('BackupService', () => {
 
   describe('getBackupPath', () => {
     it('returns path for valid backup filename', () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = service.getBackupPath('narratorr-backup-20260101T000000000Z.zip');
       expect(result).toBe(path.join(configPath, 'backups', 'narratorr-backup-20260101T000000000Z.zip'));
     });
 
     it('rejects path traversal attempts', () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       expect(service.getBackupPath('../etc/passwd')).toBeNull();
       expect(service.getBackupPath('narratorr-backup-../../etc.zip')).toBeNull();
     });
 
     it('rejects invalid filenames', () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       expect(service.getBackupPath('other-file.zip')).toBeNull();
       expect(service.getBackupPath('narratorr-backup-test.tar')).toBeNull();
     });
 
     it('rejects filenames with forward slashes', () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       expect(service.getBackupPath('path/narratorr-backup-test.zip')).toBeNull();
     });
 
     it('rejects filenames with backslashes', () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       expect(service.getBackupPath('path\\narratorr-backup-test.zip')).toBeNull();
     });
   });
@@ -375,7 +393,7 @@ describe('BackupService', () => {
 
       const unlinkSpy = vi.spyOn(fs, 'unlink');
       const mockLog = createMockLog() as unknown as { info: ReturnType<typeof vi.fn>; [k: string]: unknown };
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never);
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never, createMockDb());
 
       await service.deleteBackup(filename);
 
@@ -389,7 +407,7 @@ describe('BackupService', () => {
 
     it('throws without calling fs.unlink for a path-traversal / invalid filename', async () => {
       const unlinkSpy = vi.spyOn(fs, 'unlink');
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       await expect(service.deleteBackup('../etc/passwd')).rejects.toThrow('Invalid backup filename');
       await expect(service.deleteBackup('path\\narratorr-backup-test.zip')).rejects.toThrow('Invalid backup filename');
@@ -403,7 +421,7 @@ describe('BackupService', () => {
       const backupsDir = path.join(configPath, 'backups');
       await fs.mkdir(backupsDir, { recursive: true });
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       await expect(service.deleteBackup('narratorr-backup-20260101T000000000Z.zip')).resolves.toBeUndefined();
     });
@@ -412,7 +430,7 @@ describe('BackupService', () => {
       const unlinkSpy = vi.spyOn(fs, 'unlink').mockRejectedValue(
         Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
       );
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       await expect(service.deleteBackup('narratorr-backup-20260101T000000000Z.zip')).rejects.toThrow('EACCES');
 
@@ -422,13 +440,14 @@ describe('BackupService', () => {
 
   describe('validateRestore', () => {
     it('falls back to appMigrationCount=0 and logs warning when app DB query fails', async () => {
-      // getAppMigrationCount runs first; sqlite_master and the backup migration count follow.
-      mockExecute.mockRejectedValueOnce(new Error('database is locked'));
+      // The app count comes from the shared connection now; sqlite_master and the backup migration
+      // count are the only two statements left on the temp-DB client.
+      mockDbAll.mockRejectedValueOnce(new Error('database is locked'));
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never);
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never, createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(false);
@@ -441,7 +460,7 @@ describe('BackupService', () => {
     it('returns valid=true for DB with same migration count as app', async () => {
       mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(true);
@@ -450,12 +469,11 @@ describe('BackupService', () => {
     });
 
     it('returns valid=true for DB with fewer migrations than app', async () => {
-      // getAppMigrationCount runs first; sqlite_master and the backup migration count follow.
-      mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+      mockDbAll.mockResolvedValueOnce([{ count: 2 }]);
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(true);
@@ -464,12 +482,11 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for DB with more migrations than app', async () => {
-      // getAppMigrationCount runs first; sqlite_master and the backup migration count follow.
-      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      mockDbAll.mockResolvedValueOnce([{ count: 1 }]);
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(false);
@@ -477,11 +494,10 @@ describe('BackupService', () => {
     });
 
     it('detects missing migrations table via structured sqlite_master query (not message.includes)', async () => {
-      // First call gets the app migration count; second checks sqlite_master on the backup DB.
-      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // The first temp-DB statement is now the sqlite_master check, not the app count.
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(false);
@@ -492,11 +508,9 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for DB without __drizzle_migrations table', async () => {
-      // First call gets the app migration count; second checks sqlite_master on the backup DB.
-      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(false);
@@ -504,11 +518,9 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for invalid database file', async () => {
-      // First call gets the app migration count; second checks sqlite_master on the backup DB.
-      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
       mockExecute.mockRejectedValueOnce(new Error('file is not a database'));
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(false);
@@ -518,7 +530,7 @@ describe('BackupService', () => {
 
   describe('confirmRestore (staging)', () => {
     it('rejects with error when no pendingRestore exists', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
       await expect(service.confirmRestore()).rejects.toThrow('No pending restore');
     });
 
@@ -528,7 +540,7 @@ describe('BackupService', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-08-15T12:00:00.000Z'));
       try {
-        const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+        const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
         const extractDir = path.join(tempDir, 'restore-expired');
         await fs.mkdir(extractDir, { recursive: true });
@@ -547,7 +559,7 @@ describe('BackupService', () => {
     });
 
     it('copies validated temp DB to restore-pending.db on confirm', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       const extractDir = path.join(tempDir, 'narratorr-restore-test');
       await fs.mkdir(extractDir, { recursive: true });
@@ -565,7 +577,7 @@ describe('BackupService', () => {
     });
 
     it('new upload replaces existing pendingRestore', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
       const dir1 = path.join(tempDir, 'restore-1');
       const dir2 = path.join(tempDir, 'restore-2');
@@ -611,7 +623,7 @@ describe('processRestoreUpload', () => {
       { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
     ]);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const result = await service.processRestoreUpload(Readable.from(zipBuffer));
 
     expect(result.valid).toBe(true);
@@ -624,7 +636,7 @@ describe('processRestoreUpload', () => {
       { name: 'other-file.txt', content: Buffer.from('not a db') },
     ]);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     await expect(service.processRestoreUpload(Readable.from(zipBuffer)))
       .rejects.toThrow(RestoreUploadError);
     await expect(service.processRestoreUpload(Readable.from(await createZipBuffer([
@@ -640,20 +652,20 @@ describe('processRestoreUpload', () => {
       { name: 'narratorr.db', content: Buffer.from('not-a-real-sqlite-db') },
     ]);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const result = await service.processRestoreUpload(Readable.from(zipBuffer));
     expect(result.valid).toBe(false);
     expect(result.error).toBeDefined();
   });
 
   it('throws INVALID_ZIP for non-zip input', async () => {
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     await expect(service.processRestoreUpload(Readable.from(Buffer.from('this is not a zip'))))
       .rejects.toThrow('File is not a valid zip archive');
   });
 
   it('rethrows system-level I/O errors unchanged instead of wrapping as INVALID_ZIP', async () => {
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const zipBuffer = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
     ]);
@@ -671,7 +683,7 @@ describe('processRestoreUpload', () => {
   it('cleans up temp directory on failure', async () => {
     const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
     try {
       await service.processRestoreUpload(Readable.from(Buffer.from('not a zip')));
@@ -686,7 +698,7 @@ describe('processRestoreUpload', () => {
       { name: 'narratorr.db', content: Buffer.alloc(2048, 0x61) },
     ]);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb(), 1024);
     const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(RestoreUploadError);
@@ -700,7 +712,7 @@ describe('processRestoreUpload', () => {
       { name: 'narratorr.db', content: Buffer.alloc(2048, 0x61) },
     ]);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb(), 1024);
     await service.processRestoreUpload(Readable.from(zipBuffer)).catch(() => {});
 
     const tmpAfter = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
@@ -717,7 +729,7 @@ describe('processRestoreUpload', () => {
         { name: 'narratorr.db', content: Buffer.alloc(4096, 0x61) },
       ]);
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb(), 1024);
       const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
       expect((err as RestoreUploadError).code).toBe('OVERSIZED_DB');
 
@@ -736,14 +748,14 @@ describe('processRestoreUpload', () => {
     const atCapZip = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.alloc(1024, 0x61) },
     ]);
-    const atCapService = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const atCapService = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb(), 1024);
     const atCapResult = await atCapService.processRestoreUpload(Readable.from(atCapZip));
     expect(atCapResult.valid).toBe(true);
 
     const overZip = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.alloc(1025, 0x61) },
     ]);
-    const overService = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const overService = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb(), 1024);
     const err = await overService.processRestoreUpload(Readable.from(overZip)).catch((e: unknown) => e);
     expect((err as RestoreUploadError).code).toBe('OVERSIZED_DB');
   });
@@ -776,12 +788,13 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    // execute order: app count, backup table check, backup count.
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+    // The app count comes from the shared connection; the temp-DB client sees only the
+    // sqlite_master check and the backup count.
+    mockDbAll.mockResolvedValueOnce([{ count: 3 }]);
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const result = await service.restoreServerBackup(backupFilename);
 
     expect(result.valid).toBe(true);
@@ -799,7 +812,7 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     await expect(service.restoreServerBackup(backupFilename))
       .rejects.toThrow('Zip does not contain narratorr.db');
     await expect(service.restoreServerBackup(backupFilename))
@@ -815,12 +828,11 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    // execute order: app count, backup table check, backup count.
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+    mockDbAll.mockResolvedValueOnce([{ count: 2 }]);
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] });
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const result = await service.restoreServerBackup(backupFilename);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('newer version');
@@ -837,7 +849,7 @@ describe('restoreServerBackup', () => {
 
     const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     try {
       await service.restoreServerBackup(backupFilename);
     } catch { /* expected */ }
@@ -855,7 +867,7 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
 
     const ioError = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
     ioError.code = 'ENOSPC';
@@ -876,16 +888,14 @@ describe('restoreServerBackup', () => {
     await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), zipBuffer1);
     await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260102T000000000Z.zip'), zipBuffer2);
 
-    // Mock for each call: app migration count, sqlite_master table check, backup migration count.
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+    mockDbAll.mockResolvedValue([{ count: 3 }]);
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     await service.restoreServerBackup('narratorr-backup-20260101T000000000Z.zip');
     const firstPending = service.pendingRestore?.tempPath;
 
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
 
@@ -899,7 +909,7 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), 'this is not a zip file');
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const err = await service.restoreServerBackup(backupFilename).catch((e: unknown) => e) as RestoreUploadError;
     expect(err).toBeInstanceOf(RestoreUploadError);
     expect(err.code).toBe('INVALID_ZIP');
@@ -907,7 +917,7 @@ describe('restoreServerBackup', () => {
   });
 
   it('rejects invalid filenames before touching the filesystem', async () => {
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const err = await service.restoreServerBackup('../etc/passwd').catch((e: unknown) => e) as RestoreUploadError;
     expect(err).toBeInstanceOf(RestoreUploadError);
     expect(err.code).toBe('INVALID_ZIP');
@@ -1026,13 +1036,12 @@ describe('#324 — restore contract change', () => {
   });
 
   it('processRestoreUpload returns { valid: false, error } for newer-version backup', async () => {
-    // execute order: app count, backup table check, backup count.
+    mockDbAll.mockResolvedValueOnce([{ count: 5 }]);
     mockExecute
-      .mockResolvedValueOnce({ rows: [{ count: 5 }] })
       .mockResolvedValueOnce({ rows: [{ count: 1 }] })
       .mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const result = await service.processRestoreUpload(Readable.from(await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.from('fake-db') },
     ])));
@@ -1044,7 +1053,7 @@ describe('#324 — restore contract change', () => {
   });
 
   it('processRestoreUpload still throws RestoreUploadError for corrupt zip', async () => {
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     await expect(service.processRestoreUpload(Readable.from(Buffer.from('not a zip'))))
       .rejects.toThrow(RestoreUploadError);
   });
@@ -1058,13 +1067,13 @@ describe('#324 — restore contract change', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    // Simulate newer-version: restoreServerBackup queries the backup count before the app count.
+    // App count 5 from the shared connection; the backup reports 99 on the temp-DB client.
+    mockDbAll.mockResolvedValueOnce([{ count: 5 }]);
     mockExecute
       .mockResolvedValueOnce({ rows: [{ count: 1 }] })
-      .mockResolvedValueOnce({ rows: [{ count: 99 }] })
-      .mockResolvedValueOnce({ rows: [{ count: 5 }] });
+      .mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
     const result = await service.restoreServerBackup(backupFilename);
 
     expect(result.valid).toBe(false);
@@ -1110,7 +1119,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
   it('extractDbFromZip warns once and still rethrows the original error', async () => {
     failEveryCleanup();
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
     const zipBuffer = await createZipBuffer([{ name: 'other.txt', content: Buffer.from('no db') }]);
 
     await expect(service.processRestoreUpload(Readable.from(zipBuffer)))
@@ -1124,7 +1133,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
     // No __drizzle_migrations table → invalid, which is the branch that cleans up.
     mockExecute.mockResolvedValue({ rows: [{ count: 0 }] });
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
     const zipBuffer = await createZipBuffer([{ name: 'narratorr.db', content: Buffer.from('fake-db') }]);
 
     const result = await service.processRestoreUpload(Readable.from(zipBuffer));
@@ -1141,7 +1150,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
     vi.setSystemTime(new Date('2026-08-15T12:00:00.000Z'));
     try {
       const log = createMockLog();
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
       const extractDir = path.join(tempDir, 'restore-expired');
       await fs.mkdir(extractDir, { recursive: true });
       const tempPath = path.join(extractDir, 'restore.db');
@@ -1162,7 +1171,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
 
   it('confirmRestore warns once on the success path and still completes', async () => {
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
     const extractDir = path.join(tempDir, 'restore-ok');
     await fs.mkdir(extractDir, { recursive: true });
     const tempPath = path.join(extractDir, 'restore.db');
@@ -1179,7 +1188,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
 
   it('emits no warn when the removal succeeds', async () => {
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
     const extractDir = path.join(tempDir, 'restore-clean');
     await fs.mkdir(extractDir, { recursive: true });
     const tempPath = path.join(extractDir, 'restore.db');
@@ -1195,7 +1204,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
   it('logs a SERIALIZED error, not the raw catch binding', async () => {
     failEveryCleanup();
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
     const extractDir = path.join(tempDir, 'restore-serialized');
     await fs.mkdir(extractDir, { recursive: true });
     const tempPath = path.join(extractDir, 'restore.db');
@@ -1273,7 +1282,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
   it('create() success path still returns the metadata when the temp-db cleanup fails', async () => {
     failEveryUnlink('EACCES');
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     const result = await service.create();
 
@@ -1288,7 +1297,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
     mockExecute.mockRejectedValue(new Error('VACUUM failed'));
     failEveryUnlink('EACCES');
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     await expect(service.create()).rejects.toThrow('VACUUM failed');
 
@@ -1302,7 +1311,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
     mockExecute.mockRejectedValueOnce(new Error('VACUUM failed'));
     failEveryUnlink('EACCES');
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     await expect(service.create()).rejects.toThrow('VACUUM failed');
 
@@ -1312,7 +1321,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
 
   it('setPendingRestore still installs the new pending restore when the superseded file cannot be removed', async () => {
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
     const first = path.join(tempDir, 'first-restore.db');
     const second = path.join(tempDir, 'second-restore.db');
 
@@ -1330,7 +1339,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
     mockExecute.mockRejectedValue(new Error('VACUUM failed'));
     failEveryUnlink('ENOENT');
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     await expect(service.create()).rejects.toThrow('VACUUM failed');
 
@@ -1341,7 +1350,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
     mockExecute.mockRejectedValue(new Error('VACUUM failed'));
     failEveryUnlink('EPERM');
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     await expect(service.create()).rejects.toThrow('VACUUM failed');
 
@@ -1351,7 +1360,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
   it('emits no warn when the removals succeed', async () => {
     unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValue();
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     await service.create();
 
@@ -1362,7 +1371,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
   it('logs a SERIALIZED error, not the raw catch binding', async () => {
     failEveryUnlink('EACCES');
     const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log, createMockDb());
 
     await service.create();
 
@@ -1375,5 +1384,73 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
     expect(logged.type).toBe('Error');
     expect(logged.code).toBe('EACCES');
     expect(payload.filePath).toContain('backup-temp-');
+  });
+});
+
+describe('#2595 — the app migration count no longer opens its own connection', () => {
+  let tempDir: string;
+  let configPath: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-conn-'));
+    configPath = tempDir;
+    dbPath = path.join(tempDir, 'narratorr.db');
+    await fs.writeFile(dbPath, 'test-db-content');
+    mockExecute.mockReset();
+    mockClose.mockReset();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('opens exactly one client during a restore validation, and it is the uploaded temp DB', async () => {
+    mockDbAll.mockResolvedValue([{ count: 4 }]);
+    // Only two statements are left on that client: the sqlite_master check and the backup count.
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 2 }] });
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
+    const result = await service.validateRestore('/tmp/uploaded.db');
+
+    expect(result).toEqual({ valid: true, backupMigrationCount: 2, appMigrationCount: 4 });
+    // The count, not "still works": before this change there were two, and the extra one was a
+    // transient second connection to the LIVE database file.
+    expect(vi.mocked(createClient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createClient)).toHaveBeenCalledWith({ url: 'file:/tmp/uploaded.db' });
+    expect(mockDbAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('never routes the app migration count to the temp-DB client', async () => {
+    mockDbAll.mockResolvedValue([{ count: 4 }]);
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 2 }] });
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
+    await service.validateRestore('/tmp/uploaded.db');
+
+    // Exactly one bare migration-count statement — the backup's. A second would mean the app count
+    // came back through the client double and every count assertion above was reading the wrong source.
+    const migrationCountCalls = mockExecute.mock.calls
+      .map(([statement]) => String(statement))
+      .filter((statement) => statement.includes('__drizzle_migrations') && !statement.includes('sqlite_master'));
+    expect(migrationCountCalls).toHaveLength(1);
+  });
+
+  it('still opens and closes exactly one connection for create()\'s VACUUM INTO', async () => {
+    mockExecute.mockResolvedValue({ rows: [] });
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
+    await service.create();
+
+    expect(vi.mocked(createClient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createClient)).toHaveBeenCalledWith({ url: `file:${dbPath}` });
+    expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('VACUUM INTO'));
+    expect(mockClose).toHaveBeenCalledTimes(1);
+    // VACUUM has no business on the shared connection — it is illegal inside a transaction.
+    expect(mockDbAll).not.toHaveBeenCalled();
   });
 });
