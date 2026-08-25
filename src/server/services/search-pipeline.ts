@@ -8,7 +8,7 @@ import type { SearchResult } from '@core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
-import { DuplicateDownloadError } from './download-errors.js';
+import { DuplicateDownloadError, isBookMissingRefusal } from './download-errors.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -21,6 +21,7 @@ import { withSearchDeadline, SearchDeadlineError } from './search-deadline.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
 import { ensureError } from '../utils/ensure-error.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
@@ -349,6 +350,13 @@ async function tryGrab(
       log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has a blocking download or import');
       return { result: 'skipped', reason: 'grab_blocked' };
     }
+    // A refused grab is not a failed grab. Classifying it as a skip is also what makes the second
+    // FK unreachable: `sink.grabError` and `recordGrabFailedEvent` are both on the grab_error arm,
+    // so a deleted book writes no `book_events` row at all (#2604 AC10).
+    if (isBookMissingRefusal(grabError)) {
+      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book no longer exists');
+      return { result: 'skipped', reason: 'book_missing' };
+    }
     return { result: 'grab_error', error: ensureError(grabError) };
   }
 }
@@ -433,7 +441,8 @@ async function runSearchAndGrab(
     sink.searchComplete('skipped');
   } else if (grabResult.result === 'grab_error') {
     sink.grabError(grabResult.error, best.title);
-    const errorMessage = grabResult.error.message || 'Unknown grab error';
+    // Persisted into `book_events.reason.error` and rendered by the Activity UI (#2604 L3).
+    const errorMessage = getErrorMessage(grabResult.error) || 'Unknown grab error';
     recordGrabFailedEvent({ book, releaseTitle: best.title, errorMessage, eventHistory, log });
   }
   return grabResult;

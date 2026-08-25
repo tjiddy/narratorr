@@ -14,6 +14,7 @@
  */
 import { IndexerAuthError } from '@core/indexers/errors.js';
 import { classifyFailure, describeTransportError } from '@core/utils/failure-classification.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import {
   FailureTracker,
   computeBackoffDelayMs,
@@ -72,7 +73,9 @@ export function classifyIndexerFailure(error: unknown): IndexerFailureVerdict {
  */
 function reasonFor(error: unknown): string {
   // Only an Error's own message is operator text; String(nonError) yields "[object Object]".
-  const message = error instanceof Error ? error.message.trim() : '';
+  // The `instanceof` guard stays (String(nonError) is '[object Object]'); only the Error arm is
+  // routed, because this reason is operator-visible on the health page (#2604 AC6).
+  const message = error instanceof Error ? getErrorMessage(error).trim() : '';
   if (message) return message;
   return classifyFailure(describeTransportError(error)).reason;
 }

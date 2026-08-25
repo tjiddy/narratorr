@@ -3,6 +3,7 @@ import type { SearchResult } from '@core/index.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export type SearchBook = {
   id: number;
@@ -110,7 +111,8 @@ export function createBroadcasterSink(
     grabError(error, releaseTitle) {
       if (fenced('search_complete')) return;
       terminal = true;
-      const errorMessage = error.message || 'Unknown grab error';
+      // Reads a caught value, so it bypasses the shared renderer unless routed explicitly (#2604 L2).
+      const errorMessage = getErrorMessage(error) || 'Unknown grab error';
       safeEmit(broadcaster, 'search_complete', {
         book_id: book.id,
         total_results: totalResults,
