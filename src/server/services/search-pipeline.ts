@@ -8,7 +8,8 @@ import type { SearchResult } from '@core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
-import { DuplicateDownloadError, isBookMissingRefusal } from './download-errors.js';
+import { tryGrab, type SingleBookSearchResult } from './search-grab-attempt.js';
+export type { SingleBookSearchResult } from './search-grab-attempt.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -20,9 +21,7 @@ import { runBookQueryLadder } from './search-ladder-execution.js';
 import { withSearchDeadline, SearchDeadlineError } from './search-deadline.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
-import { ensureError } from '../utils/ensure-error.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
 import type { SearchDropReason, SearchDropSummary } from '@shared/schemas/search-stream.js';
@@ -325,40 +324,6 @@ export async function postProcessSearchResults(
     // Omitted when nothing was dropped, so every caller sees the same absence — including v1, which ignores it.
     ...(filteredOut.total > 0 && { filteredOut }),
   };
-}
-
-export type SingleBookSearchResult =
-  | { result: 'grabbed'; title: string }
-  | { result: 'no_results' }
-  | { result: 'skipped'; reason: string }
-  | { result: 'grab_error'; error: Error };
-
-async function tryGrab(
-  best: SearchResult,
-  book: { id: number; title: string },
-  downloadOrchestrator: DownloadOrchestrator,
-  log: FastifyBaseLogger,
-): Promise<Exclude<SingleBookSearchResult, { result: 'no_results' }>> {
-  try {
-    await downloadOrchestrator.grab(
-      buildGrabPayload(best, book.id),
-    );
-    log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
-    return { result: 'grabbed', title: best.title };
-  } catch (grabError: unknown) {
-    if (grabError instanceof DuplicateDownloadError) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has a blocking download or import');
-      return { result: 'skipped', reason: 'grab_blocked' };
-    }
-    // A refused grab is not a failed grab. Classifying it as a skip is also what makes the second
-    // FK unreachable: `sink.grabError` and `recordGrabFailedEvent` are both on the grab_error arm,
-    // so a deleted book writes no `book_events` row at all (#2604 AC10).
-    if (isBookMissingRefusal(grabError)) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book no longer exists');
-      return { result: 'skipped', reason: 'book_missing' };
-    }
-    return { result: 'grab_error', error: ensureError(grabError) };
-  }
 }
 
 export interface SearchAndGrabDeps {
