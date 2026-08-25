@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { ImportListExclusionService } from './import-list-exclusion.service.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 vi.mock('@core/import-lists/index.js', () => ({
   IMPORT_LIST_ADAPTER_FACTORIES: {
@@ -161,6 +162,21 @@ describe('ImportListService', () => {
       const result = await service.testConfig({ type: 'nyt', settings: { apiKey: 'key' } });
       expect(result.success).toBe(false);
       expect(result.message).toBe('Bad config');
+    });
+
+    // T38 (#2604). The reviewer's scenario: an edit-mode connection test whose saved-settings
+    // lookup throws. `import-list.service.ts` is not edited by this issue — the summary reaches
+    // the result union through `getErrorMessage` alone.
+    it('renders a DB failure from the saved-settings lookup as the summary', async () => {
+      const db = createMockDb();
+      db.select.mockImplementation(() => { throw makeLeakyDrizzleError(); });
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
+
+      const result = await service.testConfig({ type: 'nyt', settings: { apiKey: 'key' }, id: 7 });
+
+      expect(result.success).toBe(false);
+      expectNoLeak(result.message!);
+      expect(result.message).toContain('FOREIGN KEY constraint failed');
     });
 
     describe('sentinel resolution (#827)', () => {
