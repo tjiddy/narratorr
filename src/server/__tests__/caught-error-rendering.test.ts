@@ -179,7 +179,7 @@ const KNOWN_SAFE: Record<string, ReadonlyArray<readonly [string, SafeClass, stri
   ],
   'src/shared/db-error.ts': [['value.message', 'c', 'the describer itself — this is one half of the chokepoint']],
   'src/shared/error-message.ts': [
-    ['cause?.message', 'c', 'getErrorMessageWithCause; the other half of the chokepoint'],
+    ['cause?.message', 'c', 'getErrorMessageWithCause — routed through describeDbError first'],
     ['error.message', 'c', 'the chokepoint itself, plus isUniqueViolation — load-bearing per AC12'],
   ],
   'src/shared/notification-events.ts': [

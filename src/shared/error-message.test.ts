@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DrizzleQueryError } from 'drizzle-orm';
-import { getErrorMessage, isUniqueViolation } from './error-message.js';
+import { getErrorMessage, getErrorMessageWithCause, isUniqueViolation } from './error-message.js';
 import { describeDbError } from './db-error.js';
 import { ASIN_UNIQUE_VIOLATION } from '../server/services/book-dedup.js';
 import {
@@ -167,6 +167,30 @@ describe('getErrorMessage refuses to render a DB error raw (T36, AC6)', () => {
     });
     expect(() => getErrorMessage(hostile)).not.toThrow();
     expect(getErrorMessage(hostile)).toBe('ordinary failure');
+  });
+});
+
+describe('getErrorMessageWithCause is a chokepoint too', () => {
+  // Its `error.message` tail is reached whenever the cause carries neither field, which for a
+  // driver error is the raw `Failed query: … params: …` text.
+  it('summarizes a drizzle error whose cause has no message or code', () => {
+    const err = new DrizzleQueryError(
+      'insert into "downloads" ("download_url") values (?)',
+      [LEAKY_DOWNLOAD_URL],
+      {} as Error,
+    );
+    expect(err.message).toContain(LEAKY_DOWNLOAD_URL);
+
+    expectNoLeak(getErrorMessageWithCause(err));
+  });
+
+  it('is inert for the undici shapes it exists for', () => {
+    const undiciish = Object.assign(new Error('fetch failed'), {
+      cause: { message: 'connect ECONNREFUSED 10.0.0.1:443', code: 'ECONNREFUSED' },
+    });
+    expect(getErrorMessageWithCause(undiciish)).toBe('connect ECONNREFUSED 10.0.0.1:443');
+    expect(getErrorMessageWithCause(new Error('plain'))).toBe('plain');
+    expect(getErrorMessageWithCause('str')).toBe('str');
   });
 });
 

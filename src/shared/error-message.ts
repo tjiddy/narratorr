@@ -23,8 +23,20 @@ export function getErrorMessage(error: unknown): string {
   return str || 'Unknown error';
 }
 
-// Undici wraps useful network diagnostics in Error.cause.
+/**
+ * Undici wraps useful network diagnostics in Error.cause.
+ *
+ * The DB arm is here for the same reason it is on `getErrorMessage`: this is the file's OTHER
+ * untyped-error→text renderer, and its `error.message` tail is reached whenever the cause carries
+ * neither `message` nor `code` — which for a driver error would publish the bound params.
+ */
 export function getErrorMessageWithCause(error: unknown): string {
+  try {
+    const dbSummary = describeDbError(error);
+    if (dbSummary !== null) return dbSummary;
+  } catch {
+    // Fall through to the pre-#2604 behaviour.
+  }
   if (error instanceof Error) {
     const cause = error.cause as { message?: string; code?: string } | undefined;
     return cause?.message ?? cause?.code ?? error.message;
