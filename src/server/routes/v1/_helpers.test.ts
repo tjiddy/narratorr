@@ -9,6 +9,7 @@ import type { Db } from '@db/index.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { v1BooksRoutes } from './books.js';
 import { V1NotFoundError, v1ErrorHandler } from './_helpers.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../../__tests__/drizzle-error.fixture.js';
 
 // Fastify destroys failed streams before onErrorHook, so only a direct test reaches this guard.
 function validationError(): FastifyError {
@@ -128,6 +129,28 @@ describe('v1ErrorHandler', () => {
       });
       expect(destroy).not.toHaveBeenCalled();
       expect(log.error).toHaveBeenCalledTimes(1);
+      // The sibling headers-sent case already serialized; this branch did not until #2604 AC7.
+      const record = log.error.mock.calls[0]![0] as { error: { type: string } };
+      expect(record.error.type).toBe('Error');
+    });
+
+    // T35 — `v1ErrorHandler` is installed by every v1 plugin, so this one blind spot was ten sinks.
+    it('serializes an unhandled drizzle error on the uncommitted-reply branch (AC7 / L6b)', () => {
+      const { request, log } = stubRequest();
+      const { reply, send, status } = stubReply({});
+
+      v1ErrorHandler(makeLeakyDrizzleError() as FastifyError, request, reply);
+
+      expect(status).toHaveBeenCalledWith(500);
+      expect(send).toHaveBeenCalledWith({
+        error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+      });
+
+      const record = log.error.mock.calls[0]![0] as Record<string, unknown> & { error: { type: string } };
+      expect(record.error.type).toBe('DrizzleQueryError');
+      expect(record).not.toHaveProperty('query');
+      expect(record).not.toHaveProperty('params');
+      expectNoLeak(JSON.stringify(record));
     });
   });
 });

@@ -54,6 +54,8 @@ export function v1ErrorHandler(
     return reply.status(400).send({ error: { code: 'BAD_REQUEST', message: error.message } });
   }
 
-  request.log.error(error, error.message || 'Unhandled v1 error');
+  // Parameter-rooted, so `narratorr/no-raw-error-logging` cannot see it: raw, Pino publishes a
+  // DrizzleQueryError's `query` and `params` as own fields (#2604 AC7). The body is already fixed.
+  request.log.error({ error: serializeError(error) }, error.message || 'Unhandled v1 error');
   return reply.status(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
 }
