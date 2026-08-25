@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { getErrorMessage, isUniqueViolation } from './error-message.js';
+import { describeDbError } from './db-error.js';
+import { ASIN_UNIQUE_VIOLATION } from '../server/services/book-dedup.js';
+import {
+  LEAKY_DOWNLOAD_URL,
+  expectNoLeak,
+  makeLeakyDrizzleError,
+} from '../server/__tests__/drizzle-error.fixture.js';
 
 describe('getErrorMessage (shared)', () => {
   it('returns .message from Error instances', () => {
@@ -123,5 +131,65 @@ describe('isUniqueViolation (shared)', () => {
 
   it('does not throw for an Error with no cause and a non-matching message', () => {
     expect(isUniqueViolation(new Error('plain error'), PATTERN)).toBe(false);
+  });
+});
+
+describe('getErrorMessage refuses to render a DB error raw (T36, AC6)', () => {
+  it('summarizes a drizzle query error instead of returning its message', () => {
+    const raw = makeLeakyDrizzleError();
+    const rendered = getErrorMessage(raw);
+
+    expect(rendered).toBe(describeDbError(raw));
+    expectNoLeak(rendered);
+    expect(rendered).toContain('FOREIGN KEY constraint failed');
+    expect(rendered).toContain('downloads');
+  });
+
+  // AC13: the arm must be inert everywhere else, at all 161 call sites.
+  it.each([
+    ['a plain Error', new Error('No download client'), 'No download client'],
+    ['an Error carrying a URL', new Error('fetch failed for https://idx.test/api?k=1'), 'fetch failed for https://idx.test/api?k=1'],
+    ['a TypeError', new TypeError('x is not a function'), 'x is not a function'],
+    ['a string', 'plain string', 'plain string'],
+    ['null', null, 'null'],
+    ['undefined', undefined, 'undefined'],
+    ['a plain object', { message: 'sneaky' }, '[object Object]'],
+  ])('is a no-op for %s', (_label, input, expected) => {
+    expect(getErrorMessage(input)).toBe(expected);
+  });
+
+  // The describer sits under a chokepoint called from inside other people's catch blocks.
+  it('never throws, even for a hostile shape', () => {
+    const hostile = new Proxy(new Error('ordinary failure'), {
+      getOwnPropertyDescriptor() {
+        throw new Error('trap detonated');
+      },
+    });
+    expect(() => getErrorMessage(hostile)).not.toThrow();
+    expect(getErrorMessage(hostile)).toBe('ordinary failure');
+  });
+});
+
+describe('isUniqueViolation is unaffected by the AC6 arm (T37, AC12)', () => {
+  it('still matches a UNIQUE cause wrapped in a drizzle error', () => {
+    const err = new DrizzleQueryError(
+      'insert into "books" ("asin") values (?)',
+      ['B01LEAK'],
+      new Error('SQLITE_CONSTRAINT: UNIQUE constraint failed: books.asin'),
+    );
+
+    // The two functions are independent by construction: one renders, the other reads the object.
+    expect(isUniqueViolation(err, ASIN_UNIQUE_VIOLATION)).toBe(true);
+    expect(getErrorMessage(err)).not.toBe(err.message);
+  });
+
+  it('reads the original throwable, not the rendered summary', () => {
+    // The tempting wrong fix — rewrapping in `new Error(summary)` — loses `.cause` and reds here.
+    const err = makeLeakyDrizzleError({
+      query: 'insert into "books" ("asin", "download_url") values (?, ?)',
+      cause: new Error('SQLITE_CONSTRAINT: UNIQUE constraint failed: idx_books_asin_unique'),
+    });
+    expect(err.message).toContain(LEAKY_DOWNLOAD_URL);
+    expect(isUniqueViolation(err, ASIN_UNIQUE_VIOLATION)).toBe(true);
   });
 });
