@@ -20,6 +20,7 @@ import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutErro
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type ErrorEntry =
   | { type: 'flat'; status: number }
@@ -78,8 +79,10 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
     if (status !== null) {
       if (status >= 500) {
         // `narratorr/no-raw-error-logging` cannot see this: `error` is the handler's own parameter,
-        // not a catch binding, so the serialization is by hand (#2604 AC7).
-        request.log.error({ error: serializeError(error) }, error.message);
+        // not a catch binding, so the serialization is by hand (#2604 AC7). Pino writes argument 1
+        // as `msg`, so the message slot needs the text chokepoint even though argument 0 is
+        // serialized — a registry-mapped error authors its own message, making this a no-op today.
+        request.log.error({ error: serializeError(error) }, getErrorMessage(error));
       } else {
         request.log.warn({ code: (error as { code?: string }).code }, error.message);
       }
@@ -109,8 +112,10 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
     }
 
     // Untyped failures get a generic response with no stack or message leak. Same parameter-rooted
-    // blind spot as the 5xx arm above: raw, Pino would publish a DrizzleQueryError's `params`.
-    request.log.error({ error: serializeError(error) }, error.message || 'Unhandled error');
+    // blind spot as the 5xx arm above: raw, Pino would publish a DrizzleQueryError's `params` —
+    // through argument 0 as own-enumerable fields, AND through argument 1, which Pino writes as
+    // `msg`. This is the arm a DrizzleQueryError actually reaches, so both slots are routed.
+    request.log.error({ error: serializeError(error) }, getErrorMessage(error) || 'Unhandled error');
     return reply.status(500).send({ error: 'Internal server error' });
   });
 }

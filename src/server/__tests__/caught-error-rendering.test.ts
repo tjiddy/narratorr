@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
 /**
@@ -20,19 +21,29 @@ import { join, relative } from 'node:path';
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..');
 
 /**
- * Default-deny: every production `.ts` under `src/`, minus tests and fixtures, minus exactly one
- * excluded directory. Naming the INCLUDED layers is what failed twice — once by excluding
- * `src/core` on an import-direction argument (import direction constrains module graphs, not
- * runtime values), once by silently omitting `src/shared` and `src/db`.
- */
-const SCANNED_DIRS = ['src/server', 'src/core', 'src/shared', 'src/db'] as const;
-
-/**
  * The single exclusion, and its argument is different in kind from the one that was struck down:
  * an `Error` object cannot survive JSON transport, so the browser only ever receives the TEXT a
  * server chokepoint already rendered.
  */
 const EXCLUDED_DIRS = ['src/client'] as const;
+
+/**
+ * Default-deny, DISCOVERED not enumerated: every top-level directory under `src/` except the
+ * exclusions. Naming the included layers is what failed twice during grooming — once by excluding
+ * `src/core` on an import-direction argument (import direction constrains module graphs, not
+ * runtime values), once by silently omitting `src/shared` and `src/db` — and a hard-coded list
+ * fails a third way: a future `src/worker` carrying a raw caught-error read would be invisible
+ * while this suite stayed green. Discovery is what makes the scope self-maintaining.
+ */
+export function discoverScannedDirs(srcRoot: string): string[] {
+  return readdirSync(srcRoot)
+    .filter((name) => statSync(join(srcRoot, name)).isDirectory())
+    .map((name) => `src/${name}`)
+    .filter((dir) => !(EXCLUDED_DIRS as readonly string[]).includes(dir))
+    .sort();
+}
+
+const SCANNED_DIRS = discoverScannedDirs(join(REPO_ROOT, 'src'));
 
 /**
  * Reads that are safe, with the class and the one-line reason a reviewer needs to judge them.
@@ -50,147 +61,167 @@ const EXCLUDED_DIRS = ['src/client'] as const;
  */
 type SafeClass = 'a' | 'b' | 'c' | 'm';
 
-const KNOWN_SAFE: Record<string, ReadonlyArray<readonly [string, SafeClass, string]>> = {
-  'src/server/config.ts': [['parsed.error.message', 'b', 'Zod parse of the boot env schema']],
-  'src/server/plugins/error-handler.ts': [['error.message', 'a', 'registry-mapped typed errors and Fastify FST_ envelopes; the untyped arm serializes']],
-  'src/server/routes/auth.ts': [['error.message', 'a', 'inside the auth service typed-error guards']],
-  'src/server/routes/book-import-files.ts': [['containment.message', 'c', 'a containment verdict record, not a throwable']],
-  'src/server/routes/books.ts': [['error.message', 'a', 'inside a typed guard']],
-  'src/server/routes/bulk-operations.ts': [['error.message', 'a', 'guarded on the typed bulk-operation error codes']],
-  'src/server/routes/crud-routes.ts': [['result.message', 'c', 'service test result-union message']],
-  'src/server/routes/download-clients.ts': [['resolution.message', 'c', 'sentinel-resolution result union']],
-  'src/server/routes/import-lists.ts': [
-    ['outcome.message', 'c', 'import-list run outcome union'],
-    ['resolution.message', 'c', 'sentinel-resolution result union'],
-  ],
-  'src/server/routes/import-submissions.ts': [
-    ['bodyResult.error.message', 'b', 'Zod body parse'],
-    ['err.message', 'a', 'inside a typed submission-error guard'],
-    ['parsed.error.message', 'b', 'Zod query parse'],
-    ['queryResult.error.message', 'b', 'Zod query parse'],
-  ],
-  'src/server/routes/library-scan.ts': [['error.message', 'a', 'inside ScanInProgressError / LibraryPathError guards']],
-  'src/server/routes/prowlarr-compat.ts': [['result.message', 'c', 'indexer test result union']],
-  'src/server/routes/search.ts': [['error.message', 'a', 'inside isBookMissingRefusal — the typed refusal authors its own sentence']],
-  'src/server/routes/system.ts': [['error.message', 'a', 'inside typed guards']],
-  'src/server/routes/v1/_helpers.ts': [['error.message', 'a', 'V1NotFoundError and validation branches; the untyped arm serializes']],
-  'src/server/routes/v1/books.ts': [['mapped.message', 'c', 'a mapped lookup-outcome envelope, not a throwable']],
-  'src/server/services/book-deletion.service.ts': [['error.message', 'a', 'inside a PathOutsideLibraryError guard']],
-  'src/server/services/chapter-corroboration.ts': [['outcome.message', 'c', 'chapter-lookup outcome union']],
-  'src/server/services/connector-refresh-queue.ts': [['result.message', 'c', 'connector refresh result union']],
-  'src/server/services/connector.service.ts': [['error.message', 'a', 'inside a typed connector-validation guard']],
-  'src/server/services/download-client.service.ts': [['result.message', 'c', 'adapter test result union']],
-  'src/server/services/download-resolve-adapter-url.ts': [
-    ['error.cause.message', 'a', 'typed IndexerError parameter'],
-    ['error.message', 'a', 'typed IndexerError parameter; it authors its own message'],
-  ],
-  'src/server/services/health-check.service.ts': [
-    ['breaker?.message', 'c', 'an IndexerBreakerHealth field'],
-    ['delivery.message', 'c', 'a notifier delivery record field'],
-    ['result.message', 'c', 'health-check result union'],
-  ],
-  'src/server/services/import-orchestration.helpers.ts': [['containment.message', 'c', 'a containment verdict record']],
-  'src/server/services/import-queue-worker.ts': [['parsed.message', 'c', 'JSON.parse of an already-persisted error string']],
-  'src/server/services/import.service.ts': [['containment.message', 'c', 'a containment verdict record']],
-  'src/server/services/indexer.service.ts': [['result.message', 'c', 'indexer test result union']],
-  'src/server/services/merge.service.ts': [['error.message', 'a', 'inside a MergeError guard; the else arm serializes']],
-  'src/server/services/metadata-fix-match.ts': [['result.message', 'c', 'fix-match result union']],
-  'src/server/services/metadata.service.ts': [['error.message', 'a', 'inside an instanceof TransientError branch']],
-  'src/server/services/notifier.service.ts': [['result.message', 'c', 'notifier test result union']],
-  'src/server/services/search-grab-attempt.ts': [['skip.message', 'c', "a literal from this module's own GRAB_SKIPS table"]],
-  'src/server/utils/hardcover-error.ts': [['error.message', 'a', 'typed HardcoverError branch; the untyped tail calls getErrorMessage']],
-  'src/server/utils/post-processing-script.ts': [['error.message', 'a', "execFile's typed callback error, from child_process"]],
-  'src/server/utils/sentinel-resolver.ts': [['error.message', 'a', 'inside a SentinelOnNonSecretFieldError guard']],
-  'src/server/utils/short-error-text.ts': [
-    ['s.cause?.message', 'c', 'reads an already-serialized record'],
-    ['s.message', 'c', 'reads an already-serialized record'],
-  ],
-  'src/core/connectors/abs.ts': [['error.message', 'a', 'inside a ConnectorRequestError guard']],
-  'src/core/connectors/plex.ts': [['error.message', 'a', 'inside a ConnectorRequestError guard']],
-  'src/core/download-clients/blackhole.ts': [['mapped.message', 'a', 'mapNetworkError output — an operator sentence it authored']],
+/**
+ * `[receiver, class, occurrences, reason]`.
+ *
+ * The occurrence count is load-bearing, not decoration: keying on `{file, receiver}` alone let one
+ * vouched `error.message` in a file silently absolve every later `error.message` added to it, so
+ * the guard's central claim — that adding a bypass reds the suite — was false. Counts are matched
+ * EXACTLY in both directions, so adding a read reds until someone raises the number and re-justifies
+ * it, and deleting one reds until the number comes back down.
+ *
+ * A count is chosen over per-occurrence line numbers deliberately: line numbers churn on every edit
+ * above a read, which trains reviewers to bump the allowlist without reading it. A count is stable
+ * under refactoring and moves only when the number of reads actually changes.
+ */
+
+const KNOWN_SAFE: Record<string, ReadonlyArray<readonly [string, SafeClass, number, string]>> = {
+  'src/core/connectors/abs.ts': [['error.message', 'a', 1, 'inside a ConnectorRequestError guard']],
+  'src/core/connectors/plex.ts': [['error.message', 'a', 1, 'inside a ConnectorRequestError guard']],
+  'src/core/download-clients/blackhole.ts': [['mapped.message', 'a', 2, 'mapNetworkError output — an operator sentence it authored']],
   'src/core/download-clients/deluge.ts': [
-    ['data.error.message', 'c', 'a Deluge JSON-RPC error payload field'],
-    ['error.message', 'm', 'matches AddTorrentError text; never published'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
+    ['data.error.message', 'c', 4, 'a Deluge JSON-RPC error payload field'],
+    ['error.message', 'm', 2, 'matches AddTorrentError text; never published'],
+    ['parsed.error.issues[0]?.message', 'b', 4, 'Zod response parse'],
   ],
-  'src/core/download-clients/errors.ts': [['error.message', 'm', 'isTimeoutError predicate; never published']],
+  'src/core/download-clients/errors.ts': [['error.message', 'm', 2, 'isTimeoutError predicate; never published']],
   'src/core/download-clients/nzbget.ts': [
-    ['<expr>.message', 'a', '(error as Error).message inside an isTimeoutError guard'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
-    ['parsed.error.message', 'b', 'Zod response parse'],
+    ['<expr>.message', 'a', 1, '(error as Error).message inside an isTimeoutError guard'],
+    ['parsed.error.issues[0]?.message', 'b', 2, 'Zod response parse'],
+    ['parsed.error.message', 'b', 1, 'Zod response parse'],
   ],
   'src/core/download-clients/qbittorrent.ts': [
-    ['error.message', 'm', 'matches an HTTP 409 add-torrent response; never published'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
+    ['error.message', 'm', 2, 'matches an HTTP 409 add-torrent response; never published'],
+    ['parsed.error.issues[0]?.message', 'b', 2, 'Zod response parse'],
   ],
-  'src/core/download-clients/retry.ts': [['<expr>.message', 'a', '(lastError as Error).message inside an isTimeoutError guard']],
+  'src/core/download-clients/retry.ts': [['<expr>.message', 'a', 1, '(lastError as Error).message inside an isTimeoutError guard']],
   'src/core/download-clients/sabnzbd.ts': [
-    ['<expr>.message', 'a', '(error as Error).message inside an isTimeoutError guard'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
+    ['<expr>.message', 'a', 1, '(error as Error).message inside an isTimeoutError guard'],
+    ['parsed.error.issues[0]?.message', 'b', 5, 'Zod response parse'],
   ],
-  'src/core/download-clients/transmission.ts': [['parsed.error.issues[0]?.message', 'b', 'Zod response parse']],
-  'src/core/import-lists/format-zod-error.ts': [['issue?.message', 'b', 'a Zod issue, by construction']],
+  'src/core/download-clients/transmission.ts': [['parsed.error.issues[0]?.message', 'b', 3, 'Zod response parse']],
+  'src/core/import-lists/format-zod-error.ts': [['issue?.message', 'b', 1, 'a Zod issue, by construction']],
   'src/core/import-lists/hardcover-provider.ts': [
-    ['failure.message', 'c', 'a typed HardcoverFetchFailure record'],
-    ['outcome.message', 'c', 'a typed fetch outcome union'],
-    ['parsed.data.errors[0]!.message', 'c', 'a GraphQL error payload field'],
+    ['failure.message', 'c', 1, 'a typed HardcoverFetchFailure record'],
+    ['outcome.message', 'c', 1, 'a typed fetch outcome union'],
+    ['parsed.data.errors[0]!.message', 'c', 2, 'a GraphQL error payload field'],
   ],
-  'src/core/indexers/errors.ts': [['error.message', 'm', 'isProxyRelatedError predicate; never published']],
+  'src/core/indexers/errors.ts': [['error.message', 'm', 1, 'isProxyRelatedError predicate; never published']],
   'src/core/indexers/fetch.ts': [
-    ['data.message', 'c', 'a FlareSolverr response field'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
+    ['data.message', 'c', 1, 'a FlareSolverr response field'],
+    ['parsed.error.issues[0]?.message', 'b', 1, 'Zod response parse'],
   ],
   'src/core/indexers/myanonamouse.ts': [
-    ['error.message', 'a', 'inside IndexerAuthError / IndexerError guards; the tail calls getErrorMessage'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
+    ['error.message', 'a', 1, 'inside IndexerAuthError / IndexerError guards; the tail calls getErrorMessage'],
+    ['parsed.error.issues[0]?.message', 'b', 2, 'Zod response parse'],
   ],
-  'src/core/indexers/proxy.ts': [['parsed.error.issues[0]?.message', 'b', 'Zod response parse']],
-  'src/core/indexers/solver-diagnosis.ts': [['<expr>.message', 'c', "reads this module's own diagnosis record"]],
+  'src/core/indexers/proxy.ts': [['parsed.error.issues[0]?.message', 'b', 1, 'Zod response parse']],
+  'src/core/indexers/solver-diagnosis.ts': [['<expr>.message', 'c', 1, "reads this module's own diagnosis record"]],
   'src/core/metadata/audible.ts': [
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
-    ['r.message', 'c', 'a provider outcome union field'],
+    ['parsed.error.issues[0]?.message', 'b', 1, 'Zod response parse'],
+    ['r.message', 'c', 1, 'a provider outcome union field'],
   ],
   'src/core/metadata/audnexus.ts': [
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
-    ['r.message', 'c', 'a provider outcome union field'],
+    ['parsed.error.issues[0]?.message', 'b', 1, 'Zod response parse'],
+    ['r.message', 'c', 1, 'a provider outcome union field'],
   ],
   'src/core/metadata/hardcover.ts': [
-    ['parsed.data.errors[0]!.message', 'c', 'a GraphQL error payload field'],
-    ['parsed.error.issues[0]?.message', 'b', 'Zod response parse'],
+    ['parsed.data.errors[0]!.message', 'c', 3, 'a GraphQL error payload field'],
+    ['parsed.error.issues[0]?.message', 'b', 3, 'Zod response parse'],
   ],
   'src/core/notifiers/discord.ts': [
-    ['payload.error.message', 'c', 'the typed notification payload built by import-side-effects'],
-    ['payload.health.message', 'c', 'a health-check payload field'],
+    ['payload.error.message', 'c', 1, 'the typed notification payload built by import-side-effects'],
+    ['payload.health.message', 'c', 2, 'a health-check payload field'],
   ],
   'src/core/notifiers/script.ts': [
-    ['error.message', 'a', 'a typed spawn error from child_process'],
-    ['payload.error.message', 'c', 'the typed notification payload'],
-    ['payload.health.message', 'c', 'a health-check payload field'],
+    ['error.message', 'a', 1, 'a typed spawn error from child_process'],
+    ['payload.error.message', 'c', 1, 'the typed notification payload'],
+    ['payload.health.message', 'c', 2, 'a health-check payload field'],
   ],
   'src/core/notifiers/webhook.ts': [
-    ['payload.error?.message', 'c', 'the typed notification payload'],
-    ['payload.health?.message', 'c', 'a health-check payload field'],
+    ['payload.error?.message', 'c', 1, 'the typed notification payload'],
+    ['payload.health?.message', 'c', 1, 'a health-check payload field'],
   ],
-  'src/core/utils/download-url.ts': [['mapped.message', 'a', 'mapNetworkError output — an operator sentence it authored']],
-  'src/core/utils/encode-strategy.ts': [['n.message', 'c', 'an EncodeNotice field, not an error']],
+  'src/core/utils/download-url.ts': [['mapped.message', 'a', 1, 'mapNetworkError output — an operator sentence it authored']],
+  'src/core/utils/encode-strategy.ts': [['n.message', 'c', 1, 'an EncodeNotice field, not an error']],
   'src/core/utils/map-network-error.ts': [
-    ['cause.message', 'a', "the typed transport cause this module is mapping"],
-    ['error.message', 'm', "matches TypeError('fetch failed'); never published"],
+    ['cause.message', 'a', 2, 'the typed transport cause this module is mapping'],
+    ['error.message', 'm', 1, "matches TypeError('fetch failed'); never published"],
   ],
-  'src/shared/db-error.ts': [['value.message', 'c', 'the describer itself — this is one half of the chokepoint']],
+  'src/server/config.ts': [['parsed.error.message', 'b', 1, 'Zod parse of the boot env schema']],
+  'src/server/plugins/error-handler.ts': [
+    ['error.message', 'a', 5, 'registry-mapped typed errors and Fastify FST_ envelopes; both untyped log arms are routed'],
+  ],
+  'src/server/routes/auth.ts': [['error.message', 'a', 4, 'inside the auth service typed-error guards']],
+  'src/server/routes/book-import-files.ts': [['containment.message', 'c', 1, 'a containment verdict record, not a throwable']],
+  'src/server/routes/books.ts': [['error.message', 'a', 1, 'inside a typed guard']],
+  'src/server/routes/bulk-operations.ts': [['error.message', 'a', 4, 'guarded on the typed bulk-operation error codes']],
+  'src/server/routes/crud-routes.ts': [['result.message', 'c', 2, 'service test result-union message']],
+  'src/server/routes/download-clients.ts': [['resolution.message', 'c', 1, 'sentinel-resolution result union']],
+  'src/server/routes/import-lists.ts': [
+    ['outcome.message', 'c', 1, 'import-list run outcome union'],
+    ['resolution.message', 'c', 1, 'sentinel-resolution result union'],
+  ],
+  'src/server/routes/import-submissions.ts': [
+    ['bodyResult.error.message', 'b', 1, 'Zod body parse'],
+    ['err.message', 'a', 1, 'inside a typed submission-error guard'],
+    ['parsed.error.message', 'b', 4, 'Zod query/body parse'],
+    ['queryResult.error.message', 'b', 2, 'Zod query parse'],
+  ],
+  'src/server/routes/library-scan.ts': [['error.message', 'a', 2, 'inside ScanInProgressError / LibraryPathError guards']],
+  'src/server/routes/prowlarr-compat.ts': [['result.message', 'c', 2, 'indexer test result union']],
+  'src/server/routes/search.ts': [
+    ['error.message', 'a', 1, 'inside isBookMissingRefusal — the typed refusal authors its own sentence'],
+  ],
+  'src/server/routes/system.ts': [['error.message', 'a', 2, 'inside typed guards']],
+  'src/server/routes/v1/_helpers.ts': [
+    ['error.message', 'a', 4, 'V1NotFoundError and validation branches; the untyped arm routes both log slots'],
+  ],
+  'src/server/routes/v1/books.ts': [['mapped.message', 'c', 1, 'a mapped lookup-outcome envelope, not a throwable']],
+  'src/server/services/book-deletion.service.ts': [['error.message', 'a', 1, 'inside a PathOutsideLibraryError guard']],
+  'src/server/services/chapter-corroboration.ts': [['outcome.message', 'c', 1, 'chapter-lookup outcome union']],
+  'src/server/services/connector-refresh-queue.ts': [['result.message', 'c', 4, 'connector refresh result union']],
+  'src/server/services/connector.service.ts': [['error.message', 'a', 1, 'inside a typed connector-validation guard']],
+  'src/server/services/download-client.service.ts': [['result.message', 'c', 1, 'adapter test result union']],
+  'src/server/services/download-resolve-adapter-url.ts': [
+    ['error.cause.message', 'a', 1, 'typed IndexerError parameter'],
+    ['error.message', 'a', 1, 'typed IndexerError parameter; it authors its own message'],
+  ],
+  'src/server/services/health-check.service.ts': [
+    ['breaker?.message', 'c', 1, 'an IndexerBreakerHealth field'],
+    ['delivery.message', 'c', 1, 'a notifier delivery record field'],
+    ['result.message', 'c', 3, 'health-check result union'],
+  ],
+  'src/server/services/import-orchestration.helpers.ts': [['containment.message', 'c', 1, 'a containment verdict record']],
+  'src/server/services/import-queue-worker.ts': [['parsed.message', 'c', 1, 'JSON.parse of an already-persisted error string']],
+  'src/server/services/import.service.ts': [['containment.message', 'c', 1, 'a containment verdict record']],
+  'src/server/services/indexer.service.ts': [['result.message', 'c', 2, 'indexer test result union']],
+  'src/server/services/merge.service.ts': [['error.message', 'a', 1, 'inside a MergeError guard; the else arm serializes']],
+  'src/server/services/metadata-fix-match.ts': [['result.message', 'c', 1, 'fix-match result union']],
+  'src/server/services/metadata.service.ts': [['error.message', 'a', 1, 'inside an instanceof TransientError branch']],
+  'src/server/services/notifier.service.ts': [['result.message', 'c', 4, 'notifier test result union']],
+  'src/server/services/search-grab-attempt.ts': [['skip.message', 'c', 1, "a literal from this module's own GRAB_SKIPS table"]],
+  'src/server/utils/hardcover-error.ts': [['error.message', 'a', 6, 'typed HardcoverError branch; the untyped tail calls getErrorMessage']],
+  'src/server/utils/post-processing-script.ts': [['error.message', 'a', 1, "execFile's typed callback error, from child_process"]],
+  'src/server/utils/sentinel-resolver.ts': [['error.message', 'a', 1, 'inside a SentinelOnNonSecretFieldError guard']],
+  'src/server/utils/short-error-text.ts': [
+    ['s.cause?.message', 'c', 1, 'reads an already-serialized record'],
+    ['s.message', 'c', 1, 'reads an already-serialized record'],
+  ],
+  'src/shared/db-error.ts': [['value.message', 'c', 1, 'the describer itself — one half of the chokepoint']],
   'src/shared/error-message.ts': [
-    ['cause?.message', 'c', 'getErrorMessageWithCause — routed through describeDbError first'],
-    ['error.message', 'c', 'the chokepoint itself, plus isUniqueViolation — load-bearing per AC12'],
+    ['cause?.message', 'c', 2, 'getErrorMessageWithCause — routed through describeDbError first'],
+    ['error.message', 'c', 3, 'the chokepoint itself, plus isUniqueViolation — load-bearing per AC12'],
   ],
   'src/shared/notification-events.ts': [
-    ['h.message', 'c', 'a health-check payload field'],
-    ['payload.error.message', 'c', 'the typed SSE payload built by import-side-effects'],
+    ['h.message', 'c', 2, 'a health-check payload field'],
+    ['payload.error.message', 'c', 1, 'the typed SSE payload built by import-side-effects'],
   ],
-  'src/shared/schemas/connector.ts': [['field.message', 'b', 'Zod field config, not an error']],
-  'src/shared/schemas/download-client.ts': [['field.message', 'b', 'Zod field config, not an error']],
-  'src/shared/schemas/import-list.ts': [['field.message', 'b', 'Zod field config, not an error']],
-  'src/shared/schemas/indexer.ts': [['field.message', 'b', 'Zod field config, not an error']],
-  'src/shared/schemas/notifier.ts': [['field.message', 'b', 'Zod field config, not an error']],
+  'src/shared/schemas/connector.ts': [['field.message', 'b', 1, 'Zod field config, not an error']],
+  'src/shared/schemas/download-client.ts': [['field.message', 'b', 1, 'Zod field config, not an error']],
+  'src/shared/schemas/import-list.ts': [['field.message', 'b', 1, 'Zod field config, not an error']],
+  'src/shared/schemas/indexer.ts': [['field.message', 'b', 1, 'Zod field config, not an error']],
+  'src/shared/schemas/notifier.ts': [['field.message', 'b', 1, 'Zod field config, not an error']],
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -256,31 +287,39 @@ const CHAIN_RE =
   /[A-Za-z_$][A-Za-z0-9_$]*(?:\s*(?:\?\.|!\.|\.)\s*[A-Za-z_$][A-Za-z0-9_$]*|\s*\[[^\]\n]*\]|!)*\s*(?:\?\.|!\.|\.)\s*message\b/g;
 const ANY_MESSAGE_RE = /\.message\b/g;
 
-/** A read is routed when its line hands the value to one of the two chokepoints. */
-const ROUTED_RE = /getErrorMessage\s*\(|serializeError\s*\(/;
-
+/**
+ * There is NO "routed" escape hatch, and its absence is the point.
+ *
+ * An earlier version of this guard marked a read as routed when its LINE contained a
+ * `getErrorMessage(` / `serializeError(` call. That is unsound twice over. Structurally, routing a
+ * value through a chokepoint means not reading `.message` at all — a `.message` read IS the bypass,
+ * so "routed read" describes nothing. And same-line presence blessed the exact leak shape
+ * `getErrorMessage(error) || error.message`, where the right-hand fallback publishes the raw text.
+ *
+ * It was not hypothetical: the escape hid three live sites where a serialized record sat in Pino's
+ * merge slot while a raw `error.message` sat in its MESSAGE slot, which Pino writes to `msg` — the
+ * untyped arms of `error-handler.ts` and `v1/_helpers.ts` were disclosing bound params. Every read
+ * is now either absent from the source or carries an allowlist entry.
+ */
 export interface MessageRead {
   file: string;
   line: number;
   receiver: string;
-  routed: boolean;
 }
 
 export function extractMessageReads(file: string, source: string): MessageRead[] {
   const reads: MessageRead[] = [];
-  const rawLines = source.split('\n');
   stripNonCode(source).split('\n').forEach((line, index) => {
-    const routed = ROUTED_RE.test(rawLines[index] ?? '');
     const spans: Array<[number, number]> = [];
     for (const match of line.matchAll(CHAIN_RE)) {
       spans.push([match.index, match.index + match[0].length]);
-      reads.push({ file, line: index + 1, receiver: match[0].replace(/\s+/g, ''), routed });
+      reads.push({ file, line: index + 1, receiver: match[0].replace(/\s+/g, '') });
     }
     // Anything the chain pattern could not shape — `(error as Error).message`, `f({...}).message` —
     // is still a read, and is recorded rather than dropped.
     for (const match of line.matchAll(ANY_MESSAGE_RE)) {
       if (spans.some(([start, end]) => match.index >= start && match.index < end)) continue;
-      reads.push({ file, line: index + 1, receiver: '<expr>.message', routed });
+      reads.push({ file, line: index + 1, receiver: '<expr>.message' });
     }
   });
   return reads;
@@ -306,7 +345,18 @@ function scanRepo(): MessageRead[] {
 }
 
 const ALL_READS = scanRepo();
-const UNROUTED = ALL_READS.filter((read) => !read.routed);
+
+/** `file::receiver` -> live occurrence count, the shape the allowlist is matched against. */
+function tally(reads: MessageRead[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const read of reads) {
+    const key = `${read.file}::${read.receiver}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+const LIVE = tally(ALL_READS);
 
 describe('every caught error is rendered through a chokepoint (AC14 Rule 1)', () => {
   it('scans a non-trivial surface — the inventory is not vacuously empty', () => {
@@ -322,28 +372,50 @@ describe('every caught error is rendered through a chokepoint (AC14 Rule 1)', ()
     expect(SCANNED_DIRS).not.toContain('src/client');
   });
 
-  it('has no unrouted read that is not in KNOWN_SAFE', () => {
-    const unlisted = UNROUTED.filter(
-      (read) => !(KNOWN_SAFE[read.file] ?? []).some(([receiver]) => receiver === read.receiver),
-    ).map((read) => `${read.file}:${read.line} ${read.receiver}`);
-
-    expect(unlisted).toEqual([]);
+  it('discovers today\'s runtime directories rather than hard-coding them', () => {
+    // Every non-client top-level directory is present because it EXISTS, not because it is named.
+    expect(SCANNED_DIRS).toEqual(['src/core', 'src/db', 'src/server', 'src/shared']);
+    const named = readdirSync(join(REPO_ROOT, 'src'))
+      .filter((name) => statSync(join(REPO_ROOT, 'src', name)).isDirectory())
+      .map((name) => `src/${name}`);
+    expect([...SCANNED_DIRS, ...EXCLUDED_DIRS].sort()).toEqual(named.sort());
   });
 
-  // Removing a safe site reds too, so the allowlist cannot silently drift the way a tally does.
-  it('has no KNOWN_SAFE entry that no longer exists', () => {
-    const live = new Set(UNROUTED.map((read) => `${read.file}::${read.receiver}`));
-    const stale = Object.entries(KNOWN_SAFE).flatMap(([file, entries]) =>
-      entries.filter(([receiver]) => !live.has(`${file}::${receiver}`)).map(([receiver]) => `${file} ${receiver}`),
-    );
+  /** `file::receiver` -> allowed occurrence count, from the curated allowlist. */
+  const ALLOWED = new Map<string, number>(
+    Object.entries(KNOWN_SAFE).flatMap(([file, entries]) =>
+      entries.map(([receiver, , occurrences]) => [`${file}::${receiver}`, occurrences] as const),
+    ),
+  );
 
-    expect(stale).toEqual([]);
+  // Both directions from one comparison: an unlisted read, a read count above what was vouched for,
+  // and an allowlist entry whose reads have gone away all surface as the same kind of mismatch.
+  it('matches every live read against a vouched-for occurrence count', () => {
+    const keys = new Set([...LIVE.keys(), ...ALLOWED.keys()]);
+    const mismatches = [...keys]
+      .map((key) => ({ key, live: LIVE.get(key) ?? 0, allowed: ALLOWED.get(key) ?? 0 }))
+      .filter(({ live, allowed }) => live !== allowed)
+      .map(({ key, live, allowed }) => `${key} — ${live} live read(s), ${allowed} allowlisted`);
+
+    expect(mismatches).toEqual([]);
   });
 
-  it('gives every allowlist entry a class and a reason', () => {
+  // A second `error.message` added to a file that already vouches for one is the exact shape the
+  // previous `{file, receiver}` keying accepted silently.
+  it('rejects an extra occurrence of an already-vouched receiver', () => {
+    const [key, allowed] = [...ALLOWED.entries()][0]!;
+    const inflated = new Map(LIVE);
+    inflated.set(key, allowed + 1);
+
+    const mismatches = [...inflated.keys()].filter((k) => (inflated.get(k) ?? 0) !== (ALLOWED.get(k) ?? 0));
+    expect(mismatches).toEqual([key]);
+  });
+
+  it('gives every allowlist entry a class, a positive count, and a reason', () => {
     for (const [file, entries] of Object.entries(KNOWN_SAFE)) {
-      for (const [receiver, safeClass, reason] of entries) {
+      for (const [receiver, safeClass, occurrences, reason] of entries) {
         expect(['a', 'b', 'c', 'm'], `${file} ${receiver}`).toContain(safeClass);
+        expect(occurrences, `${file} ${receiver}`).toBeGreaterThan(0);
         expect(reason.length, `${file} ${receiver}`).toBeGreaterThan(10);
       }
     }
@@ -355,7 +427,7 @@ describe('every caught error is rendered through a chokepoint (AC14 Rule 1)', ()
     'src/server/services/search-pipeline.ts',
     'src/server/services/indexer-failure-state.ts',
     'src/core/metadata/hardcover.ts',
-  ])('%s has no unrouted read of a caught value', (file) => {
+  ])('%s has no raw read of a caught value', (file) => {
     const listed = (KNOWN_SAFE[file] ?? []).map(([receiver]) => receiver);
     expect(listed).not.toContain('error.message');
     expect(listed).not.toContain('grabResult.error.message');
@@ -385,7 +457,7 @@ describe('the boot catch does not print a raw error (AC7 structural half)', () =
 // rather than being a one-off manual procedure.
 
 describe('the extraction sees every shape that defeated an earlier draft (T43)', () => {
-  const reads = (source: string) => extractMessageReads('fixture.ts', source).filter((r) => !r.routed);
+  const reads = (source: string) => extractMessageReads('fixture.ts', source);
 
   it.each([
     ['a bare return in a catch', 'try { f(); } catch (error) { return error.message; }', 'error.message'],
@@ -404,16 +476,46 @@ describe('the extraction sees every shape that defeated an earlier draft (T43)',
     expect(reads(source)).toEqual([]);
   });
 
-  it('treats a chokepoint call on the same line as routed', () => {
+  // F2's shape. An earlier draft asserted this line was fully "routed" and therefore exempt — the
+  // right-hand fallback is precisely what publishes the raw params when the summary is empty.
+  it('reports a raw fallback sitting beside a chokepoint call', () => {
     const source = 'const m = getErrorMessage(error) || error.message;';
-    expect(extractMessageReads('fixture.ts', source).every((r) => r.routed)).toBe(true);
+    expect(reads(source).map((r) => r.receiver)).toEqual(['error.message']);
   });
 
-  // The two directory bullets are the structurally important ones: they test the SCOPE CONSTANT,
-  // which is the parameter two earlier drafts got wrong.
+  it('reports a raw read beside an unrelated chokepoint call on the same line', () => {
+    const source = "log.error({ error: serializeError(error) }, error.message);";
+    expect(reads(source).map((r) => r.receiver)).toEqual(['error.message']);
+  });
+
+  // The directory bullets are the structurally important ones: they test the SCOPE, which is the
+  // parameter earlier drafts got wrong three separate ways.
   it.each(['src/core', 'src/shared', 'src/db'])('%s is inside the scanned surface', (dir) => {
-    expect(SCANNED_DIRS as readonly string[]).toContain(dir);
+    expect(SCANNED_DIRS).toContain(dir);
     // And a read placed there would be seen: the scanner walks the real tree, so assert it found files.
     expect(productionFiles(join(REPO_ROOT, dir)).length).toBeGreaterThan(0);
+  });
+
+  // The falsifiable half of F1: a sixth runtime layer must enter the scan with no edit here. Driven
+  // against a temp tree, because the assertion is about a directory that does not exist yet.
+  it('picks up a future top-level runtime directory without an edit', () => {
+    const root = mkdtempSync(join(tmpdir(), 'caught-error-scope-'));
+    try {
+      for (const name of ['client', 'server', 'shared', 'worker']) mkdirSync(join(root, name));
+      writeFileSync(join(root, 'notes.md'), 'files are not directories');
+
+      const discovered = discoverScannedDirs(root);
+
+      expect(discovered).toContain('src/worker');
+      expect(discovered).not.toContain('src/client');
+      expect(discovered).toEqual(['src/server', 'src/shared', 'src/worker']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a raw read living in that future directory', () => {
+    // Scope discovery is only worth anything if the extractor then sees the read.
+    expect(reads('export function h(e: unknown) { return (e as Error).message; }')).toHaveLength(1);
   });
 });

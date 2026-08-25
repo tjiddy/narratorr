@@ -151,6 +151,10 @@ describe('v1ErrorHandler', () => {
       expect(record).not.toHaveProperty('query');
       expect(record).not.toHaveProperty('params');
       expectNoLeak(JSON.stringify(record));
+      // Pino writes argument 1 as `msg`; serializing argument 0 leaves it untouched.
+      const message = String(log.error.mock.calls[0]![1]);
+      expectNoLeak(message);
+      expect(message).toContain('FOREIGN KEY constraint failed');
     });
   });
 });

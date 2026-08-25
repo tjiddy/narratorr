@@ -442,6 +442,8 @@ describe('error-handler logging (F4)', () => {
     const record = () => logSpy.error.mock.calls[0]![0] as Record<string, unknown> & {
       error: Record<string, unknown>;
     };
+    // Pino writes argument 1 as `msg`, so it is a publication surface in its own right.
+    const message = () => String(logSpy.error.mock.calls[0]![1]);
 
     it('T25 — the untyped arm serializes and the 500 body is unchanged', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-drizzle' });
@@ -455,6 +457,9 @@ describe('error-handler logging (F4)', () => {
       expect(logged).not.toHaveProperty('params');
       expect(logged.error.type).toBe('DrizzleQueryError');
       expectNoLeak(JSON.stringify(logged));
+      // The message slot is the other half: serializing argument 0 does nothing for argument 1.
+      expectNoLeak(message());
+      expect(message()).toContain('FOREIGN KEY constraint failed');
     });
 
     it('T34 — the registered-5xx arm serializes and keeps its body', async () => {
@@ -468,6 +473,8 @@ describe('error-handler logging (F4)', () => {
       expect(logged).not.toHaveProperty('clientName');
       expect(logged.error.type).toBe('DownloadClientError');
       expect(Object.keys(logged.error).sort()).toEqual(['message', 'stack', 'type']);
+      // A typed error's message is authored, so routing it is a no-op — pin that it stays intact.
+      expect(message()).toBe('HTTP 500: Internal Server Error');
     });
   });
 });
