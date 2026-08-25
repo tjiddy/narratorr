@@ -19,6 +19,8 @@ import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
+import { serializeError } from '../utils/serialize-error.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type ErrorEntry =
   | { type: 'flat'; status: number }
@@ -40,7 +42,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [LibraryRootBusyError, { type: 'flat', status: 409 }],
   [SeriesBindChurnError, { type: 'flat', status: 409 }],
   [LibraryPathError, { type: 'flat', status: 400 }],
-  [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, INVALID_STATUS: 400, IMPORTED_BOOK_NO_RETRY: 409 } }],
+  [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, BOOK_NOT_FOUND: 404, INVALID_STATUS: 400, IMPORTED_BOOK_NO_RETRY: 409 } }],
   [DuplicateDownloadError, { type: 'coded', codes: { ACTIVE_DOWNLOAD_EXISTS: 409, PIPELINE_ACTIVE: 409 } }],
   [TaskRegistryError, { type: 'coded', codes: { NOT_FOUND: 404, ALREADY_RUNNING: 409 } }],
   [BookRejectionError, { type: 'coded', codes: { NOT_FOUND: 404, NOT_IMPORTED: 400, NO_IDENTIFIERS: 400 } }],
@@ -76,7 +78,11 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
 
     if (status !== null) {
       if (status >= 500) {
-        request.log.error(error, error.message);
+        // `narratorr/no-raw-error-logging` cannot see this: `error` is the handler's own parameter,
+        // not a catch binding, so the serialization is by hand (#2604 AC7). Pino writes argument 1
+        // as `msg`, so the message slot needs the text chokepoint even though argument 0 is
+        // serialized — a registry-mapped error authors its own message, making this a no-op today.
+        request.log.error({ error: serializeError(error) }, getErrorMessage(error));
       } else {
         request.log.warn({ code: (error as { code?: string }).code }, error.message);
       }
@@ -105,8 +111,11 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
       return reply.status(fstError.statusCode).send({ error: error.message });
     }
 
-    // Untyped failures get a generic response with no stack or message leak.
-    request.log.error(error, error.message || 'Unhandled error');
+    // Untyped failures get a generic response with no stack or message leak. Same parameter-rooted
+    // blind spot as the 5xx arm above: raw, Pino would publish a DrizzleQueryError's `params` —
+    // through argument 0 as own-enumerable fields, AND through argument 1, which Pino writes as
+    // `msg`. This is the arm a DrizzleQueryError actually reaches, so both slots are routed.
+    request.log.error({ error: serializeError(error) }, getErrorMessage(error) || 'Unhandled error');
     return reply.status(500).send({ error: 'Internal server error' });
   });
 }

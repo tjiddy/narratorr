@@ -1,7 +1,12 @@
 /**
- * Rejects catch-sourced errors passed raw to Pino as object values, bare identifiers,
- * or bare `serializeError` calls. Fixes to `{ error: serializeError(err) }` and inserts
- * a depth-aware import when needed.
+ * Rejects raw error values passed to a printer — Pino (`log`/`logger`) or `console` — as object
+ * values, bare identifiers, or bare `serializeError` calls. Fixes Pino sites to
+ * `{ error: serializeError(err) }` with a depth-aware import; console sites report without a fix,
+ * because their remedy is per-site (`logCrash` for the boot catch, `getErrorMessage` for the
+ * migration CLI, which wants readable text rather than a JSON record).
+ *
+ * The contract this implements is the behaviour table in #2604 AC7, executed by the RuleTester
+ * suite next door. Extend the table and the suite, not this prose.
  */
 
 const path = require('node:path');
@@ -12,66 +17,89 @@ const LOG_METHODS = new Set(['error', 'warn', 'info', 'debug', 'fatal', 'trace']
 // Both logger naming conventions are part of the rule's contract.
 const LOG_RECEIVERS = new Set(['log', 'logger']);
 
+// `console.error(msg, err)` hands the object to util.inspect, which prints own enumerable
+// properties — a DrizzleQueryError's `query` and `params` included (#2604 AC7).
+const CONSOLE_METHODS = new Set(['error', 'warn', 'info', 'debug', 'log', 'trace']);
+
+/**
+ * A BARE printer argument is claimed only under these spellings. Name-agnostic was measured
+ * against HEAD and flags ~25 ordinary structured-log objects, and separating them needs type
+ * information a syntactic rule does not have. The object-property arm carries no such gate: a
+ * property literally keyed `error` is unambiguous whatever its value is named.
+ */
+const BARE_ERROR_NAMES = new Set(['error', 'err', 'e']);
+
+const PINO = 'pino';
+const CONSOLE = 'console';
+
 // The object keys the rule claims. Both fold into `error`, which is the key Pino serializes.
 const ERROR_KEYS = new Set(['error', 'err']);
 
-// Recognizes direct receivers and one-level `.log`/`.logger` members.
-function isLogCall(node) {
-  if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression') {
-    return false;
-  }
+/** Direct receivers, one-level `.log`/`.logger` members, and `console`. */
+function classifyPrinter(node) {
+  if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression') return null;
   const { property, object } = node.callee;
-  if (property.type !== 'Identifier' || !LOG_METHODS.has(property.name)) {
-    return false;
+  if (property.type !== 'Identifier') return null;
+
+  if (object.type === 'Identifier' && object.name === 'console') {
+    return CONSOLE_METHODS.has(property.name) ? CONSOLE : null;
   }
-  if (object.type === 'Identifier' && LOG_RECEIVERS.has(object.name)) return true;
+  if (!LOG_METHODS.has(property.name)) return null;
+  if (object.type === 'Identifier' && LOG_RECEIVERS.has(object.name)) return PINO;
   if (
     object.type === 'MemberExpression' &&
     object.property.type === 'Identifier' &&
     LOG_RECEIVERS.has(object.property.name)
   ) {
-    return true;
+    return PINO;
   }
-  return false;
+  return null;
 }
 
-function isCatchParam(variable) {
-  for (const def of variable.defs) {
-    if (def.type === 'CatchClause') return true;
-  }
-  return false;
-}
-
-function isCatchCallbackParam(variable) {
-  for (const def of variable.defs) {
-    if (def.type !== 'Parameter') continue;
-    const fnNode = def.node;
-    if (fnNode.parent && fnNode.parent.type === 'CallExpression') {
-      const callNode = fnNode.parent;
-      if (
-        callNode.callee.type === 'MemberExpression' &&
-        callNode.callee.property.type === 'Identifier' &&
-        callNode.callee.property.name === 'catch'
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function isErrorSource(identifierNode, context) {
-  const scope = context.sourceCode.getScope(identifierNode);
-  let currentScope = scope;
+/** The innermost binding for a name, or null. Closest binding wins — case C9. */
+function resolveBinding(identifierNode, context) {
+  let currentScope = context.sourceCode.getScope(identifierNode);
   while (currentScope) {
     for (const variable of currentScope.variables) {
-      if (variable.name === identifierNode.name) {
-        return isCatchParam(variable) || isCatchCallbackParam(variable);
-      }
+      if (variable.name === identifierNode.name) return variable;
     }
     currentScope = currentScope.upper;
   }
-  return false;
+  return null;
+}
+
+/** The `.catch(err => …)` callback parameter — a caught value that is not a CatchClause binding. */
+function isCatchCallbackParam(variable) {
+  return variable.defs.some((def) => {
+    if (def.type !== 'Parameter') return false;
+    const call = def.node.parent;
+    return (
+      call &&
+      call.type === 'CallExpression' &&
+      call.callee.type === 'MemberExpression' &&
+      call.callee.property.type === 'Identifier' &&
+      call.callee.property.name === 'catch'
+    );
+  });
+}
+
+/** A value the program CAUGHT: a catch clause binding or a `.catch()` callback parameter. */
+function isCaughtBinding(identifierNode, context) {
+  const variable = resolveBinding(identifierNode, context);
+  if (variable === null) return false;
+  return variable.defs.some((def) => def.type === 'CatchClause') || isCatchCallbackParam(variable);
+}
+
+/**
+ * A catch binding or ANY function parameter. The parameter arm is what reaches Fastify's
+ * `setErrorHandler((error, req, reply) => …)` and the named `v1ErrorHandler` — both real leaks
+ * this rule could not see while it traced catch bindings only (#2604 AC7 R5/R6). It is purely
+ * syntactic: `getScope` resolves parameters natively, so no type checker is involved.
+ */
+function isErrorSource(identifierNode, context) {
+  const variable = resolveBinding(identifierNode, context);
+  if (variable === null) return false;
+  return variable.defs.some((def) => def.type === 'CatchClause' || def.type === 'Parameter');
 }
 
 /** Computes a depth-aware helper import under `src/server`, with a legacy fallback outside it. */
@@ -152,6 +180,16 @@ function buildImportFixes(fixer, context, serializer) {
   return [fixer.insertTextBefore(program.body[0], importText + '\n')];
 }
 
+/** The root identifier of a non-computed member chain, or null. */
+function memberChainRoot(node) {
+  let cursor = node;
+  while (cursor.type === 'MemberExpression') {
+    if (cursor.computed) return null;
+    cursor = cursor.object;
+  }
+  return cursor.type === 'Identifier' ? cursor : null;
+}
+
 /** The key a property reports under. Computed spellings included — matching is frozen. */
 function resolveReportKey(key) {
   if (key.type === 'Identifier') return key.name;
@@ -171,20 +209,23 @@ function resolveStaticKey(prop) {
   return null;
 }
 
-/** Returns the value's source text when it traces to a catch binding, else null. */
+/**
+ * Returns the value's source text when it traces to an error source, else null.
+ *
+ * Noncomputed member chains are traced only to a CAUGHT binding. An ordinary function parameter is
+ * accepted as a WHOLE value only — measured narrowing (#2604): a typed handler's `error.message`
+ * is a rendered string the site authored on purpose (`download-resolve-adapter-url.ts:81`), and a
+ * syntactic rule cannot tell that from a raw read. The whole-value shape is unambiguous either way,
+ * which is what R7 needs.
+ */
 function traceErrorValue(value, context) {
   if (value.type === 'Identifier') {
     return isErrorSource(value, context) ? value.name : null;
   }
   if (value.type !== 'MemberExpression') return null;
 
-  // Trace only noncomputed member chains to a root catch binding.
-  let cursor = value;
-  while (cursor.type === 'MemberExpression') {
-    if (cursor.computed) return null;
-    cursor = cursor.object;
-  }
-  if (cursor.type !== 'Identifier' || !isErrorSource(cursor, context)) return null;
+  const root = memberChainRoot(value);
+  if (!root || !isCaughtBinding(root, context)) return null;
   return context.sourceCode.getText(value);
 }
 
@@ -231,8 +272,8 @@ function removeProperty(fixer, prop, context) {
   return fixer.removeRange([comma.range[0], prop.range[1]]);
 }
 
-function checkObjectArg(node, firstArg, context) {
-  const entries = firstArg.properties.map((prop) => ({
+function checkObjectArg(objectArg, context, fixable) {
+  const entries = objectArg.properties.map((prop) => ({
     prop,
     staticKey: resolveStaticKey(prop),
     valueText:
@@ -249,14 +290,14 @@ function checkObjectArg(node, firstArg, context) {
   const [first, extra] = matches;
 
   const serializer = classifySerializer(first.prop, context);
-  const fixable = serializer !== SERIALIZER_CONFLICTING && isObjectFixable(entries, matches);
+  const canFix = fixable && serializer !== SERIALIZER_CONFLICTING && isObjectFixable(entries, matches);
 
   for (const match of matches) {
     context.report({
       node: match.prop,
       messageId: 'rawError',
       fix:
-        fixable && match === first
+        canFix && match === first
           ? (fixer) => [
               fixer.replaceText(first.prop, `error: serializeError(${first.valueText})`),
               ...(extra ? [removeProperty(fixer, extra.prop, context)] : []),
@@ -267,26 +308,39 @@ function checkObjectArg(node, firstArg, context) {
   }
 }
 
-function checkBareIdentifierArg(node, firstArg, context) {
-  if (firstArg.type !== 'Identifier') return;
-  if (!isErrorSource(firstArg, context)) return;
+function checkBareIdentifierArg(identifierArg, context, fixable) {
+  if (!BARE_ERROR_NAMES.has(identifierArg.name)) return;
+  if (!isErrorSource(identifierArg, context)) return;
 
-  const serializer = classifySerializer(firstArg, context);
+  const serializer = classifySerializer(identifierArg, context);
 
   context.report({
-    node: firstArg,
+    node: identifierArg,
     messageId: 'rawError',
     fix:
-      serializer === SERIALIZER_CONFLICTING
+      !fixable || serializer === SERIALIZER_CONFLICTING
         ? null
         : (fixer) => [
-            fixer.replaceText(firstArg, `{ error: serializeError(${firstArg.name}) }`),
+            fixer.replaceText(identifierArg, `{ error: serializeError(${identifierArg.name}) }`),
             ...buildImportFixes(fixer, context, serializer),
           ],
   });
 }
 
-function checkBareSerializeErrorArg(node, firstArg, context) {
+/**
+ * A bare member chain — `log.error(error.cause, 'x')`. `traceErrorValue` has always understood
+ * these; the visitor simply never handed it one (#2604 AC7 R4). Reported without a fix: wrapping
+ * in place would collide with the object arm's fixer for no benefit at a live site count of zero.
+ */
+function checkBareMemberArg(memberArg, context) {
+  const root = memberChainRoot(memberArg);
+  if (!root || !BARE_ERROR_NAMES.has(root.name)) return;
+  if (traceErrorValue(memberArg, context) === null) return;
+
+  context.report({ node: memberArg, messageId: 'rawError' });
+}
+
+function checkBareSerializeErrorArg(firstArg, context) {
   if (firstArg.type !== 'CallExpression') return;
   if (firstArg.callee.type !== 'Identifier' || firstArg.callee.name !== 'serializeError') {
     return;
@@ -321,17 +375,29 @@ const rule = {
   create(context) {
     return {
       CallExpression(node) {
-        if (!isLogCall(node)) return;
-        const firstArg = node.arguments[0];
-        if (!firstArg) return;
+        const printer = classifyPrinter(node);
+        if (!printer) return;
 
-        if (firstArg.type === 'ObjectExpression') {
-          checkObjectArg(node, firstArg, context);
-        } else if (firstArg.type === 'Identifier') {
-          checkBareIdentifierArg(node, firstArg, context);
-        } else if (firstArg.type === 'CallExpression') {
-          checkBareSerializeErrorArg(node, firstArg, context);
-        }
+        // The autofix inserts `serializeError` under an `error` key, which is only correct in
+        // Pino's merge-object slot. Console remedies are per-site, so that arm reports fixless.
+        const fixable = printer === PINO;
+
+        // Pino's signature is `(mergeObject, message, ...interpolation)`, so only argument 0 can
+        // carry an error. `console.error(msg, err)` has no merge slot at all and both live leaks
+        // pass the error at argument 1 — hence the split (#2604 AC7 R1/R2, F18).
+        const inspected = printer === CONSOLE ? node.arguments : node.arguments.slice(0, 1);
+
+        inspected.forEach((arg, index) => {
+          if (arg.type === 'ObjectExpression') {
+            checkObjectArg(arg, context, fixable);
+          } else if (arg.type === 'Identifier') {
+            checkBareIdentifierArg(arg, context, fixable && index === 0);
+          } else if (arg.type === 'MemberExpression') {
+            checkBareMemberArg(arg, context);
+          } else if (arg.type === 'CallExpression' && fixable && index === 0) {
+            checkBareSerializeErrorArg(arg, context);
+          }
+        });
       },
     };
   },

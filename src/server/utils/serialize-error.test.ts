@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { serializeError, redactUrlsInText } from './serialize-error.js';
+import { describeDbError } from '@shared/db-error.js';
+import {
+  TORRENT_BASE64,
+  expectNoLeak,
+  makeLeakyDrizzleError,
+} from '../__tests__/drizzle-error.fixture.js';
 
 describe('serializeError', () => {
   describe('Error instances', () => {
@@ -314,5 +320,69 @@ describe('serializeError', () => {
         expect(result).toHaveProperty('type');
       }
     });
+  });
+});
+
+describe('data: URI redaction (T7, AC4)', () => {
+  const dataUri = `data:application/x-bittorrent;base64,${TORRENT_BASE64}`;
+
+  it('collapses a base64 torrent URI embedded in the message', () => {
+    const result = serializeError(new Error(`grab of ${dataUri} failed`));
+    expect(result.message).toContain('data:application/x-bittorrent [resolved]');
+    expect(result.message).not.toContain(TORRENT_BASE64);
+    // Prose around it survives, as it does for the https/magnet arms.
+    expect(result.message).toContain('grab of');
+    expect(result.message).toContain('failed');
+  });
+
+  it('collapses it on the stack too', () => {
+    const result = serializeError(new Error(`grab of ${dataUri} failed`));
+    expect(result.stack).toBeDefined();
+    expect(result.stack).not.toContain(TORRENT_BASE64);
+  });
+
+  it('redacts a bare string through redactUrlsInText', () => {
+    expect(redactUrlsInText(`saw ${dataUri} here`)).toBe(
+      'saw data:application/x-bittorrent [resolved] here',
+    );
+  });
+
+  it('leaves a non-base64 data: URI recognisable rather than mangling unrelated prose', () => {
+    expect(redactUrlsInText('no uri here, just data: and a colon')).toBe(
+      'no uri here, just data: and a colon',
+    );
+  });
+});
+
+describe('drizzle short-circuit and stack rebuild (T8/T9, AC5)', () => {
+  it('replaces the message with the AC3 summary', () => {
+    const result = serializeError(makeLeakyDrizzleError());
+    expect(result.message).toBe(describeDbError(makeLeakyDrizzleError()));
+    expectNoLeak(result.message);
+  });
+
+  it('rebuilds the stack instead of passing the message-echoing original through', () => {
+    const result = serializeError(makeLeakyDrizzleError());
+    expect(result.stack).toBeDefined();
+    expectNoLeak(result.stack!);
+    // A rebuild that drops every frame is a regression, not a fix.
+    expect(result.stack).toMatch(/\n\s+at /);
+    expect(result.stack!.split('\n')[0]).toBe(result.message);
+  });
+
+  it('keeps type and the recursive cause chain', () => {
+    const result = serializeError(makeLeakyDrizzleError());
+    expect(result.type).toBe('DrizzleQueryError');
+    expect(result.cause?.message).toContain('FOREIGN KEY constraint failed');
+    expect(result.cause?.code).toBe('SQLITE_CONSTRAINT');
+  });
+
+  it('carries no query or params keys', () => {
+    const result = serializeError(makeLeakyDrizzleError());
+    // Direct-property form: not.objectContaining cannot separate omitted from present-undefined.
+    expect(result).not.toHaveProperty('query');
+    expect(result).not.toHaveProperty('params');
+    expect(result).not.toBeInstanceOf(Error);
+    expect(Object.keys(result).sort()).toEqual(['cause', 'message', 'stack', 'type']);
   });
 });

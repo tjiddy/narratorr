@@ -537,6 +537,47 @@ describe('useEventSource', () => {
       expect(toast.success).toHaveBeenCalledWith('"My Book" imported successfully', { duration: 5000 });
     });
 
+    // T29 (#2604 L2 rendered). The SSE `error_message` is whatever the server chokepoint produced;
+    // the toast description is where the operator would have seen the passkey.
+    it('renders the DB summary as the grab_error description, with no base64 payload', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      const summary = 'Database insert on downloads failed: SQLITE_CONSTRAINT: FOREIGN KEY constraint failed';
+
+      act(() => {
+        es!.simulateOpen();
+        es!.simulateEvent('search_complete', {
+          book_id: 1716, total_results: 3, outcome: 'grab_error',
+          book_title: 'Doomed Book', error_message: summary, release_title: 'Rel',
+        });
+      });
+
+      expect(toast.error).toHaveBeenCalledWith('Doomed Book', { description: summary, duration: 5000 });
+      const [, options] = (toast.error as ReturnType<typeof vi.fn>).mock.calls[0]! as [string, { description: string }];
+      expect(options.description).not.toContain('base64,');
+      expect(options.description).not.toContain('params:');
+    });
+
+    // Stimulus-side counterfactual: the same assertion must be able to SEE a raw message.
+    it('would surface the raw message if the server sent one (the assertion is not vacuous)', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      const raw = 'Failed query: insert into "downloads" values (?)\nparams: data:application/x-bittorrent;base64,QUFB';
+
+      act(() => {
+        es!.simulateOpen();
+        es!.simulateEvent('search_complete', {
+          book_id: 1716, total_results: 3, outcome: 'grab_error',
+          book_title: 'Doomed Book', error_message: raw, release_title: 'Rel',
+        });
+      });
+
+      const [, options] = (toast.error as ReturnType<typeof vi.fn>).mock.calls[0]! as [string, { description: string }];
+      expect(options.description).toContain('base64,');
+    });
+
     it('does NOT show toast on grab_started (removed from TOAST_EVENT_CONFIG)', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DownloadOrchestrator } from './download-orchestrator.js';
 import type { DownloadService, DownloadWithBook } from './download.service.js';
 import { DuplicateDownloadError } from './download.service.js';
+import { BOOK_NOT_FOUND_MESSAGE } from './download-errors.js';
 import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -565,6 +566,18 @@ describe('DownloadOrchestrator', () => {
     } as DownloadRow;
   }
 
+  /**
+   * #2604 AC1 made the pre-grab `books` existence read unconditional, so a blanket `select -> []`
+   * now reads as "book deleted". Only that read projects `{ status }`, so discriminate on the
+   * projection rather than on call order — these suites run grabs concurrently.
+   */
+  function selectFor(blockerResult: unknown = []) {
+    return (projection?: Record<string, unknown>) =>
+      projection && 'status' in projection
+        ? mockDbChain([{ status: 'wanted' }])
+        : mockDbChain(blockerResult);
+  }
+
   function makeReplaceOrch() {
     const db = createMockDb();
     const ds = createMockDownloadService({
@@ -653,7 +666,7 @@ describe('DownloadOrchestrator', () => {
   describe('single-flight through grabWithReplace (F6)', () => {
     it('coalesces two concurrent IDENTICAL confirmed replaces into ONE admission', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       const p = { downloadUrl: 'm', title: 'New', bookId: 810, replace: true, guid: 'same-id' };
 
       const [a, b] = await Promise.all([orch.grabInternal(p), orch.grabInternal(p)]);
@@ -665,7 +678,7 @@ describe('DownloadOrchestrator', () => {
 
     it('DISTINCT-identity confirmed replaces do NOT coalesce (serialize → two admissions)', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       const base = { downloadUrl: 'm', title: 'New', bookId: 811, replace: true };
 
       await Promise.all([
@@ -687,7 +700,7 @@ describe('DownloadOrchestrator', () => {
     it('internal replace path: PERSISTENT book-status failure → grab SUCCEEDS + no book_status_change SSE', async () => {
       const { db, orch } = makeReplaceOrch();
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockReturnValue(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockImplementation(selectFor());
       asMock(transitionBookStatus).mockRejectedValue(new Error('db locked'));
 
       const result = await orch.grabInternal({ downloadUrl: 'm', title: 'New', bookId: 930, replace: true, guid: 'g' });
@@ -699,7 +712,7 @@ describe('DownloadOrchestrator', () => {
     it('internal replace path: book-status write RETRY-SUCCESS → exactly one book_status_change SSE', async () => {
       const { db, orch } = makeReplaceOrch();
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockReturnValue(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockImplementation(selectFor());
       asMock(transitionBookStatus).mockRejectedValueOnce(new Error('transient')).mockResolvedValue(true);
 
       const result = await orch.grabInternal({ downloadUrl: 'm', title: 'New', bookId: 931, replace: true, guid: 'g' });
@@ -712,7 +725,7 @@ describe('DownloadOrchestrator', () => {
   describe('single-flight enumerated contracts (F18/AC5)', () => {
     it('terminal Blackhole winner: two identical confirmed replaces coalesce to ONE handoff (one client-add), both share it', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       asMock(ds.grab).mockResolvedValue(handoffDownload);
       asMock(ds.getById).mockResolvedValue(handoffDownload);
       const p = { downloadUrl: 'm', title: 'BH', bookId: 850, replace: true, guid: 'bh-id' };
@@ -726,7 +739,7 @@ describe('DownloadOrchestrator', () => {
 
     it('no self-deadlock: a single confirmed replace acquires the book key ONCE and completes under a timeout', async () => {
       const { db, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       const result = await Promise.race([
         orch.grabInternal({ downloadUrl: 'm', title: 'Solo', bookId: 851, replace: true, guid: 'solo' }),
         new Promise((_r, reject) => setTimeout(() => reject(new Error('self-deadlock timeout')), 1000)),
@@ -736,7 +749,7 @@ describe('DownloadOrchestrator', () => {
 
     it('distinct sections do NOT overlap: two different-release confirmed replaces on one book serialize', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       let releaseFirst!: (v: unknown) => void;
       asMock(ds.grab)
         .mockImplementationOnce(() => new Promise((r) => { releaseFirst = r; }))
@@ -752,7 +765,7 @@ describe('DownloadOrchestrator', () => {
 
     it('A→B→A settled: a re-issued A after the first A settled runs a FRESH admission (no post-settlement coalescing)', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       const pA = { downloadUrl: 'm', title: 'A', bookId: 853, replace: true, guid: 'a' };
       await orch.grabInternal(pA);
       await orch.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 853, replace: true, guid: 'b' });
@@ -762,7 +775,7 @@ describe('DownloadOrchestrator', () => {
 
     it('A→B→A pending: A2 joins A1 while B is queued; A2 shares A1 outcome and B still runs', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       const a1dl = { ...mockDownload, id: 100 } as typeof mockDownload;
       const bdl = { ...mockDownload, id: 200 } as typeof mockDownload;
       let releaseA1!: (v: unknown) => void;
@@ -792,7 +805,7 @@ describe('DownloadOrchestrator', () => {
   describe('shared admission mutex across entry paths (F19/AC13/AC17)', () => {
     it('a confirmed replace and a concurrent legacy grab() (v1/RSS/search-pipeline representative) do NOT overlap', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       let releaseReplace!: (v: unknown) => void;
       asMock(ds.grab)
         .mockImplementationOnce(() => new Promise((r) => { releaseReplace = r; }))
@@ -808,7 +821,7 @@ describe('DownloadOrchestrator', () => {
 
     it('a confirmed replace and a concurrent grabForRetry on the same book do NOT overlap', async () => {
       const { db, ds, orch } = makeReplaceOrch();
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockImplementation(selectFor());
       asMock(ds.getActiveByBookId).mockResolvedValue([]);
       let releaseReplace!: (v: unknown) => void;
       asMock(ds.grab)
@@ -828,7 +841,7 @@ describe('DownloadOrchestrator', () => {
     it('persistent status-write failure → grab SUCCEEDS, one handoff, concurrent waiter shares it, degraded logged, entry evicted on settle', async () => {
       const { db, ds, orch } = makeReplaceOrch();
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockReturnValue(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockImplementation(selectFor());
       asMock(ds.grab).mockResolvedValue(handoffDownload);
       asMock(ds.getById).mockResolvedValue(handoffDownload);
       asMock(transitionBookStatus).mockRejectedValue(new Error('db unwritable'));
@@ -842,6 +855,128 @@ describe('DownloadOrchestrator', () => {
       expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled();
       expect(log.warn).toHaveBeenCalled();
       expect(hasInFlightReplace(`870::${canonicalReleaseIdentity(p)}`)).toBe(false);
+    });
+  });
+});
+
+describe('DownloadOrchestrator — the stale-bookId guard (#2604 AC1/AC2)', () => {
+  let downloadService: DownloadService;
+  let log: FastifyBaseLogger;
+  let orchestrator: DownloadOrchestrator;
+  let bookRows: Array<{ status: string }>;
+  /** Every projection the pre-grab existence read issued — the observable T14 keys on. */
+  let booksReads: unknown[];
+  let mockDb: ReturnType<typeof createMockDb>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks keeps implementations, and a sibling suite leaves this one rejecting.
+    (transitionBookStatus as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    downloadService = createMockDownloadService({
+      grab: vi.fn().mockResolvedValue(mockDownload),
+      getById: vi.fn().mockResolvedValue(mockDownload),
+    });
+    log = { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as FastifyBaseLogger;
+    bookRows = [{ status: 'wanted' }];
+    booksReads = [];
+    mockDb = createMockDb();
+    // Only the existence read projects `{ status }`; everything else is the (empty) blocker set.
+    mockDb.select.mockImplementation((projection?: Record<string, unknown>) => {
+      if (projection && 'status' in projection) {
+        booksReads.push(projection);
+        return mockDbChain(bookRows);
+      }
+      return mockDbChain([]);
+    });
+    orchestrator = new DownloadOrchestrator(downloadService, mockDb as never, log);
+  });
+
+  const params = (bookId?: number) => ({
+    downloadUrl: 'magnet:?xt=urn:btih:abc',
+    title: 'Test',
+    ...(bookId !== undefined && { bookId }),
+  });
+
+  /** Reaches the shared primitive the replace workflow drives through `ReplaceCtx.grab`. */
+  const grabWithOpts = (p: unknown, opts: unknown) =>
+    (orchestrator as unknown as {
+      grabWithinAdmissionLock: (p: unknown, o: unknown) => Promise<unknown>;
+    }).grabWithinAdmissionLock(p, opts);
+
+  describe('T10 — a missing book is refused before any side effect', () => {
+    it.each(['grab', 'grabInternal', 'grabForRetry'] as const)('%s rejects with the typed refusal', async (method) => {
+      bookRows = [];
+      await expect(orchestrator[method](params(1716))).rejects.toMatchObject({
+        code: 'BOOK_NOT_FOUND',
+        message: BOOK_NOT_FOUND_MESSAGE,
+      });
+      // The call-count assertion is AC2's observable: a status/throw assertion alone stays green
+      // if the guard is moved below the download-client send.
+      expect(downloadService.grab).not.toHaveBeenCalled();
+      expect(booksReads).toHaveLength(1);
+    });
+  });
+
+  describe('T11 — the live-book path is unchanged', () => {
+    it('grabs and captures the row status as bookStatusAtGrab', async () => {
+      await expect(orchestrator.grab(params(2))).resolves.toBe(mockDownload);
+      expect(downloadService.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 2, bookStatusAtGrab: 'wanted' }),
+      );
+      expect(emitGrabStarted).toHaveBeenCalled();
+      expect(notifyGrab).toHaveBeenCalled();
+      expect(recordGrabbedEvent).toHaveBeenCalled();
+    });
+  });
+
+  describe('T12 — the replace/override path is guarded too', () => {
+    // At HEAD this arm skipped the books read entirely, which is what let the dead id through.
+    it('refuses when an override is supplied but the row is absent', async () => {
+      bookRows = [];
+      await expect(grabWithOpts(params(1716), { bookStatusAtGrabOverride: 'downloading' })).rejects.toMatchObject({
+        code: 'BOOK_NOT_FOUND',
+      });
+      expect(downloadService.grab).not.toHaveBeenCalled();
+    });
+
+    it('keeps the override when the row is present — the existence read does not hijack it', async () => {
+      bookRows = [{ status: 'imported' }];
+      await grabWithOpts(params(2), { bookStatusAtGrabOverride: 'downloading' });
+      expect(downloadService.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ bookStatusAtGrab: 'downloading' }),
+      );
+    });
+  });
+
+  describe('T13 — an unlinked grab is not a refusal', () => {
+    it('performs no books lookup and grabs normally', async () => {
+      await expect(orchestrator.grab(params())).resolves.toBe(mockDownload);
+      expect(booksReads).toHaveLength(0);
+      expect(downloadService.grab).toHaveBeenCalled();
+    });
+  });
+
+  describe('T14 — a non-positive bookId is refused without a read', () => {
+    it.each([
+      ['grab', 0], ['grab', -1],
+      ['grabInternal', 0], ['grabInternal', -1],
+      ['grabForRetry', 0], ['grabForRetry', -1],
+    ] as const)('%s(bookId: %i)', async (method, bookId) => {
+      await expect(orchestrator[method](params(bookId))).rejects.toMatchObject({
+        code: 'BOOK_NOT_FOUND',
+      });
+      expect(downloadService.grab).not.toHaveBeenCalled();
+      // Separates "refused early" from "refused after a pointless query".
+      expect(booksReads).toHaveLength(0);
+    });
+  });
+
+  describe('T15 — unrelated downstream failures are surfaced unchanged', () => {
+    it('does not swallow or re-label an error raised after the lookup', async () => {
+      const downstream = new Error('No download client');
+      (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(downstream);
+
+      await expect(orchestrator.grab(params(2))).rejects.toBe(downstream);
     });
   });
 });

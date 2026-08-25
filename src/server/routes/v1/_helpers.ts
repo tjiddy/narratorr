@@ -3,6 +3,7 @@ import type { DbOrTx } from '@db/index.js';
 import type { authors, books, downloads, narrators, series } from '@db/schema.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { serializeError } from '../../utils/serialize-error.js';
+import { getErrorMessage } from '../../utils/error-message.js';
 
 type PublicIdTable = typeof books | typeof authors | typeof narrators | typeof series | typeof downloads;
 
@@ -54,6 +55,10 @@ export function v1ErrorHandler(
     return reply.status(400).send({ error: { code: 'BAD_REQUEST', message: error.message } });
   }
 
-  request.log.error(error, error.message || 'Unhandled v1 error');
+  // Parameter-rooted, so `narratorr/no-raw-error-logging` cannot see it: raw, Pino publishes a
+  // DrizzleQueryError's `query` and `params` as own fields (#2604 AC7). The body is already fixed.
+  // Argument 1 becomes Pino's `msg`, so it needs the text chokepoint too — this is the untyped
+  // tail, which is exactly where a driver error lands.
+  request.log.error({ error: serializeError(error) }, getErrorMessage(error) || 'Unhandled v1 error');
   return reply.status(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
 }

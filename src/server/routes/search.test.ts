@@ -8,6 +8,9 @@ import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import type { Db } from '@db/index.js';
+import { BOOK_NOT_FOUND_MESSAGE, bookNotFoundError } from '../services/download-errors.js';
+import { describeDbError } from '@shared/db-error.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
   return {
@@ -372,6 +375,48 @@ describe('search routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
+    });
+
+    describe('#2604 — a grab against a deleted/merged book', () => {
+      const grabPayload = { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test', bookId: 1716 };
+      const postGrab = () => app.inject({ method: 'POST', url: '/api/search/grab', payload: grabPayload });
+
+      it('T16 — answers 404 with the sentence-plus-code envelope', async () => {
+        (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(bookNotFoundError());
+
+        const res = await postGrab();
+
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: BOOK_NOT_FOUND_MESSAGE, code: 'book_not_found' });
+        expect(res.json()).not.toHaveProperty('message');
+      });
+
+      it('T17 — the 500 body contains no part of the failed query', async () => {
+        (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(makeLeakyDrizzleError());
+
+        const res = await postGrab();
+
+        expect(res.statusCode).toBe(500);
+        expectNoLeak(res.payload);
+        expect(res.json().error).toContain('FOREIGN KEY constraint failed');
+        // The "unreadably huge toast" half: the raw message runs to ~400 chars of SQL and params.
+        expect(res.payload.length).toBeLessThan(400);
+      });
+
+      it('T19 — the log record is clean too', async () => {
+        (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(makeLeakyDrizzleError());
+
+        await postGrab();
+
+        const record = logSpies.error.mock.calls.find(([, msg]) => msg === 'Grab failed')?.[0] as {
+          error: { message: string; type: string };
+        };
+        expect(record.error.type).toBe('DrizzleQueryError');
+        expect(record.error.message).toBe(describeDbError(makeLeakyDrizzleError()));
+        expect(record).not.toHaveProperty('params');
+        expect(record.error).not.toHaveProperty('params');
+        expect(record.error).not.toHaveProperty('query');
+      });
     });
 
     it('returns 500 when grab fails', async () => {

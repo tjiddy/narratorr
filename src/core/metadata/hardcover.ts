@@ -11,6 +11,7 @@ import {
 import { parseRetryAfterMs } from './retry-after.js';
 import { normalizeMemberPosition, pickPreferredMembersByPosition } from './hardcover-member-dedup.js';
 import { RateLimitError, TransientError, MetadataError } from './errors.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
 const HARDCOVER_PROVIDER = 'hardcover';
 
@@ -183,7 +184,9 @@ function mapNetworkError(error: unknown): never {
   if (error instanceof RateLimitError || error instanceof TransientError || error instanceof MetadataError) {
     throw error;
   }
-  const message = error instanceof Error ? error.message : String(error);
+  // `instanceof Error` does NOT exclude a DrizzleQueryError, so route the Error arm through the
+  // shared renderer; this message becomes operator-visible metadata-provider text (#2604 AC6).
+  const message = getErrorMessage(error);
   throw new TransientError(HARDCOVER_PROVIDER, message);
 }
 
@@ -241,7 +244,7 @@ async function executeGraphQL(apiKey: string, body: { query: string; variables?:
   try {
     return await outcome.response.json();
   } catch (error: unknown) {
-    throw new MetadataError(HARDCOVER_PROVIDER, `Failed to parse Hardcover response: ${error instanceof Error ? error.message : String(error)}`);
+    throw new MetadataError(HARDCOVER_PROVIDER, `Failed to parse Hardcover response: ${getErrorMessage(error)}`);
   }
 }
 

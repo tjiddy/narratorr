@@ -17,6 +17,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { BYTES_PER_GB } from '@shared/constants.js';
 import { IndexerError } from '@core/indexers/errors.js';
 import { MAX_SEARCH_RUNGS, buildQueryLadder } from './search-query-ladder.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -305,6 +306,33 @@ describe('retrySearch', () => {
     if (result.outcome === 'retry_error') {
       expect(result.error).toBe('Book not found');
     }
+  });
+
+  // T32 (#2604 L4). No site edit — proof that the chokepoint reaches an unmodified consumer, and
+  // that the warn record `download.service.ts` forwards is clean too.
+  it('renders a leaky DB grab failure as the summary in both the outcome and the log record', async () => {
+    const retryLog = createMockLogger();
+    const deps = createDeps({
+      downloadOrchestrator: inject<DownloadOrchestrator>({
+        grab: vi.fn(),
+        grabForRetry: vi.fn().mockRejectedValue(makeLeakyDrizzleError()),
+        hasGrabBlocker: vi.fn().mockResolvedValue(false),
+      }),
+      log: inject<FastifyBaseLogger>(retryLog),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retry_error');
+    if (result.outcome !== 'retry_error') return;
+    expectNoLeak(result.error);
+    expect(result.error).toContain('FOREIGN KEY constraint failed');
+
+    const record = retryLog.warn.mock.calls.find(
+      ([, msg]) => msg === 'Retry search failed',
+    )![0] as { error: { message: string; type: string } };
+    expect(record.error.type).toBe('DrizzleQueryError');
+    expectNoLeak(JSON.stringify(record));
   });
 
   it('returns retry_error when indexer search throws', async () => {

@@ -18,6 +18,7 @@ import { TaskRegistryError } from '../services/task-registry.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { BackupRecoveryError, BackupAmbiguityError, MarkerPathConflictError } from '../utils/import-staging.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -407,6 +408,9 @@ describe('error-handler logging (F4)', () => {
 
     app.get('/throw-generic-500', async () => { throw new Error('disk full'); });
     app.get('/throw-rename-no-path', async () => { throw new RenameError('No path set', 'NO_PATH'); });
+    // `getStatusForError` returns null for a drizzle error, so this lands on the untyped arm only.
+    app.get('/throw-drizzle', async () => { throw makeLeakyDrizzleError(); });
+    app.get('/throw-dc-generic-log', async () => { throw new DownloadClientError('Transmission', 'HTTP 500: Internal Server Error'); });
 
     await app.ready();
   });
@@ -430,5 +434,47 @@ describe('error-handler logging (F4)', () => {
     await app.inject({ method: 'GET', url: '/throw-rename-no-path' });
     expect(logSpy.warn).toHaveBeenCalled();
     expect(logSpy.error).not.toHaveBeenCalled();
+  });
+
+  // #2604 AC7. Neither arm is reachable by `narratorr/no-raw-error-logging` at HEAD: the value is
+  // the handler's own parameter, not a catch binding, so both had to be found by hand.
+  describe('AC7 — no raw error object reaches Pino', () => {
+    const record = () => logSpy.error.mock.calls[0]![0] as Record<string, unknown> & {
+      error: Record<string, unknown>;
+    };
+    // Pino writes argument 1 as `msg`, so it is a publication surface in its own right.
+    const message = () => String(logSpy.error.mock.calls[0]![1]);
+
+    it('T25 — the untyped arm serializes and the 500 body is unchanged', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-drizzle' });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Internal server error' });
+
+      const logged = record();
+      // Pino emits own-enumerable properties, so a raw DrizzleQueryError publishes both of these.
+      expect(logged).not.toHaveProperty('query');
+      expect(logged).not.toHaveProperty('params');
+      expect(logged.error.type).toBe('DrizzleQueryError');
+      expectNoLeak(JSON.stringify(logged));
+      // The message slot is the other half: serializing argument 0 does nothing for argument 1.
+      expectNoLeak(message());
+      expect(message()).toContain('FOREIGN KEY constraint failed');
+    });
+
+    it('T34 — the registered-5xx arm serializes and keeps its body', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-dc-generic-log' });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json()).toEqual({ error: 'HTTP 500: Internal Server Error' });
+
+      const logged = record();
+      // `clientName` is a genuine own enumerable field, so a raw log would hoist it to top level.
+      expect(logged).not.toHaveProperty('clientName');
+      expect(logged.error.type).toBe('DownloadClientError');
+      expect(Object.keys(logged.error).sort()).toEqual(['message', 'stack', 'type']);
+      // A typed error's message is authored, so routing it is a no-op — pin that it stays intact.
+      expect(message()).toBe('HTTP 500: Internal Server Error');
+    });
   });
 });

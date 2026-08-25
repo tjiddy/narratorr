@@ -8,7 +8,8 @@ import type { SearchResult } from '@core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
-import { DuplicateDownloadError } from './download-errors.js';
+import { tryGrab, type SingleBookSearchResult } from './search-grab-attempt.js';
+export type { SingleBookSearchResult } from './search-grab-attempt.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -20,8 +21,7 @@ import { runBookQueryLadder } from './search-ladder-execution.js';
 import { withSearchDeadline, SearchDeadlineError } from './search-deadline.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
-import { ensureError } from '../utils/ensure-error.js';
-import { buildGrabPayload } from './grab-payload.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
 import type { SearchDropReason, SearchDropSummary } from '@shared/schemas/search-stream.js';
@@ -326,33 +326,6 @@ export async function postProcessSearchResults(
   };
 }
 
-export type SingleBookSearchResult =
-  | { result: 'grabbed'; title: string }
-  | { result: 'no_results' }
-  | { result: 'skipped'; reason: string }
-  | { result: 'grab_error'; error: Error };
-
-async function tryGrab(
-  best: SearchResult,
-  book: { id: number; title: string },
-  downloadOrchestrator: DownloadOrchestrator,
-  log: FastifyBaseLogger,
-): Promise<Exclude<SingleBookSearchResult, { result: 'no_results' }>> {
-  try {
-    await downloadOrchestrator.grab(
-      buildGrabPayload(best, book.id),
-    );
-    log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
-    return { result: 'grabbed', title: best.title };
-  } catch (grabError: unknown) {
-    if (grabError instanceof DuplicateDownloadError) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has a blocking download or import');
-      return { result: 'skipped', reason: 'grab_blocked' };
-    }
-    return { result: 'grab_error', error: ensureError(grabError) };
-  }
-}
-
 export interface SearchAndGrabDeps {
   indexerSearchService: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
@@ -433,7 +406,8 @@ async function runSearchAndGrab(
     sink.searchComplete('skipped');
   } else if (grabResult.result === 'grab_error') {
     sink.grabError(grabResult.error, best.title);
-    const errorMessage = grabResult.error.message || 'Unknown grab error';
+    // Persisted into `book_events.reason.error` and rendered by the Activity UI (#2604 L3).
+    const errorMessage = getErrorMessage(grabResult.error) || 'Unknown grab error';
     recordGrabFailedEvent({ book, releaseTitle: best.title, errorMessage, eventHistory, log });
   }
   return grabResult;

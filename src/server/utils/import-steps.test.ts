@@ -105,6 +105,7 @@ import {
   stagedAudioReplace,
   BackupRecoveryError,
 } from './import-steps.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 function createMockLog(): FastifyBaseLogger {
   return {
@@ -1751,6 +1752,26 @@ describe('handleImportFailure', () => {
     })).rejects.toThrow('import broke');
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('partial.mp3'), { force: true });
     expect(rmdir).toHaveBeenCalledWith('/lib/book');
+  });
+
+  // T39 (#2604). The durable half: `downloads.error_message` persists whatever `getErrorMessage`
+  // renders, and this site is NOT edited by the issue — it proves the chokepoint reached it.
+  it('persists the DB summary as downloads.error_message, not the failed query', async () => {
+    const log = createMockLog();
+    const set = vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }) });
+    const db = { update: vi.fn().mockReturnValue({ set }) };
+
+    await expect(handleImportFailure({
+      error: makeLeakyDrizzleError(), targetPath: undefined, db: db as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow();
+
+    const written = set.mock.calls[0]![0] as { errorMessage: string };
+    expectNoLeak(written.errorMessage);
+    expect(written.errorMessage).toContain('FOREIGN KEY constraint failed');
+    // The paired log record is clean too — `serializeError` is the other chokepoint.
+    const logged = (log.error as ReturnType<typeof vi.fn>).mock.calls.find(([, msg]) => msg === 'Import failed')![0];
+    expectNoLeak(JSON.stringify(logged));
   });
 
   it('skips cleanup when targetPath is undefined', async () => {

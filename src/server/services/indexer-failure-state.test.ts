@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { IndexerAuthError } from '@core/indexers/errors.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 import {
   IndexerFailureTracker,
   backoffDelayMs,
@@ -339,6 +340,20 @@ describe('classifyIndexerFailure (#2376 AC11, AC12)', () => {
 
   it('does not misclassify a code-less throw as terminal', () => {
     expect(classifyIndexerFailure({ nope: true })).toEqual({ terminal: false, reason: 'the server could not be reached' });
+  });
+
+  // T44 (#2604 AC6). `reason` is rendered on the health page via `recordSearchFailure`, and the
+  // `error instanceof Error` narrowing does NOT exclude a DrizzleQueryError — it extends Error.
+  it('summarizes a leaky DB error rather than publishing the failed query', () => {
+    const verdict = classifyIndexerFailure(makeLeakyDrizzleError());
+
+    expect(verdict.terminal).toBe(false);
+    expectNoLeak(verdict.reason);
+    expect(verdict.reason).toContain('FOREIGN KEY constraint failed');
+  });
+
+  it('leaves the non-Error arm on the shared vocabulary, not on [object Object]', () => {
+    expect(classifyIndexerFailure({})).toEqual({ terminal: false, reason: 'the server could not be reached' });
   });
 });
 
