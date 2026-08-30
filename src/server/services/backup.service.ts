@@ -138,6 +138,11 @@ export class BackupService {
         const output = fss.createWriteStream(zipPath);
         const archive = new ZipArchive({ zlib: { level: 9 } });
 
+        // A write-stream error with no listener is an uncaught exception, so a disk-full or
+        // permission failure here takes the process down instead of rejecting; the restore path's
+        // twin already listens. Without it the failure surfaces downstream as an ENOENT from the
+        // stat below, naming the missing zip rather than the errno that prevented it.
+        output.on('error', reject);
         output.on('close', resolve);
         archive.on('error', reject);
 
