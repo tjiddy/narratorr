@@ -13,6 +13,7 @@ import {
   type HardcoverFetchFailure,
   type HardcoverRateLimitBudget,
 } from '../utils/hardcover-http.js';
+import { canonicalizeAsin, isAudibleAsin } from '@shared/asin.js';
 import { parseHardcoverListUrl } from '@shared/hardcover-list-url.js';
 import type { HardcoverListType, HardcoverImportMax } from '@shared/hardcover-list-types.js';
 
@@ -27,6 +28,11 @@ export interface HardcoverConfig {
 // Cap full custom-list pages independently of untrusted books_count.
 const PAGE_SIZE = 100;
 const MAX_LIST_PAGES = 50;
+
+// Bounds the untrusted editions[] array at the boundary it arrives on: every admitted alternate is
+// one more Audnexus round-trip a missed resolve may spend against the shared throttle. The resolver
+// carries its own cap (MAX_ASIN_PROBES) for the port it exposes to other callers.
+const MAX_ALTERNATE_ASINS = 5;
 
 const NOT_FOUND_MSG = 'List not found or private';
 const UNEXPECTED_LISTS_MSG = 'Hardcover returned an unexpected response (missing lists)';
@@ -195,6 +201,34 @@ function pickAsin(book: HardcoverBook): string | undefined {
     ?? (book.editions ?? []).map(editionAsin).find((v) => v !== undefined);
 }
 
+/**
+ * The other candidate ASINs on the same payload, for the resolver to fall through to when the
+ * primary does not resolve. Audible-shaped only, because Audnexus serves nothing else and a print
+ * edition's ISBN-10-shaped `asin` is a guaranteed wasted probe.
+ *
+ * `canonicalizeAsin` decides only whether a candidate is a duplicate; it never rewrites what is
+ * emitted. Normalization for the wire happens once, in the resolver, so there is a single place to
+ * reason about the dispatched form — hence a padded lower-case twin is admitted here verbatim.
+ */
+function pickAlternateAsins(book: HardcoverBook): string[] {
+  const seen = new Set<string>();
+  const primary = canonicalizeAsin(pickAsin(book));
+  if (primary !== null) seen.add(primary);
+
+  const candidates = [...(book.editions ?? []).map(editionAsin), editionAsin(book.default_audio_edition)]
+    .filter((candidate): candidate is string => candidate !== undefined);
+
+  const alternates: string[] = [];
+  for (const candidate of candidates) {
+    const key = canonicalizeAsin(candidate);
+    if (key === null || seen.has(key) || !isAudibleAsin(key)) continue;
+    seen.add(key);
+    alternates.push(candidate);
+    if (alternates.length === MAX_ALTERNATE_ASINS) break;
+  }
+  return alternates;
+}
+
 function pickIsbn(book: HardcoverBook): string | undefined {
   return editionIsbn(book.default_audio_edition)
     ?? (book.editions ?? []).map(editionIsbn).find((v) => v !== undefined);
@@ -210,10 +244,14 @@ function pickAuthor(book: HardcoverBook): string | undefined {
 
 function mapBook(book: HardcoverBook): ImportListItem | null {
   if (!book.title) return null;
+  const alternateAsins = pickAlternateAsins(book);
   return {
     title: book.title,
     author: pickAuthor(book),
     asin: pickAsin(book),
+    // Key-absent rather than `[]`: an empty array is a different object under `toEqual`, and every
+    // whole-item consumer — fixtures, the preview payload — sees a book with no alternates as it is today.
+    ...(alternateAsins.length > 0 && { alternateAsins }),
     isbn: pickIsbn(book),
     // Prefer the audiobook cover; fall back to the book's print image.
     coverUrl: book.default_audio_edition?.image?.url || book.image?.url || undefined,

@@ -322,6 +322,140 @@ describe('HardcoverProvider', () => {
     });
   });
 
+  // A default_audio_edition ASIN can be a real Audible edition that Audnexus does not serve, so the
+  // mapper carries the payload's other Audible ASINs for the resolver to fall through to (#2611).
+  describe('mapBook — alternate ASIN candidates (#2611)', () => {
+    const trendingOne = async (book: Record<string, unknown>) => {
+      server.use(trendingTwoStep({ ids: [1], books: [{ id: 1, contributions: [], ...book }] }));
+      const items = await new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' }).fetchItems();
+      return items[0]!;
+    };
+
+    it('carries the sibling editions[] ASIN as an alternate, without repeating the primary', async () => {
+      // Hardcover book 1464466: the default audio edition is real but dead at Audnexus; its sibling resolves.
+      const item = await trendingOne({
+        title: 'This Inevitable Ruin',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: [{ asin: 'B0DK29VYL1' }, { asin: 'B0DK282SYV' }],
+      });
+
+      expect(item.asin).toBe('B0DK29VYL1');
+      expect(item.alternateAsins).toEqual(['B0DK282SYV']);
+    });
+
+    it('omits the key entirely when there are no alternates', async () => {
+      const item = await trendingOne({
+        title: 'Single Edition',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: [{ asin: 'B0DK29VYL1' }],
+      });
+
+      // `toEqual`/`objectContaining` cannot separate an absent key from a present-`undefined` one.
+      expect(item).not.toHaveProperty('alternateAsins');
+    });
+
+    it('admits only Audible-shaped candidates — a print ASIN or ISBN-10 is a wasted Audnexus probe', async () => {
+      const item = await trendingOne({
+        title: 'Mixed Editions',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: [{ asin: 'PRINT_ASIN' }, { asin: '0593135202' }, { asin: 'B0DK282SYV' }],
+      });
+
+      expect(item.alternateAsins).toEqual(['B0DK282SYV']);
+    });
+
+    it('leaves the print-ASIN primary untouched — the shape filter scopes to alternates only', async () => {
+      const item = await trendingOne({ title: 'Print Only', editions: [{ asin: 'PRINT_ASIN' }] });
+
+      expect(item.asin).toBe('PRINT_ASIN');
+      expect(item).not.toHaveProperty('alternateAsins');
+    });
+
+    it('yields no alternates and no crash for null, empty, blank and missing edition ASINs', async () => {
+      server.use(trendingTwoStep({
+        ids: [1, 2, 3, 4],
+        books: [
+          { id: 1, title: 'Null Editions', contributions: [], editions: null, default_audio_edition: null },
+          { id: 2, title: 'Empty Editions', contributions: [], editions: [] },
+          { id: 3, title: 'Null Asins', contributions: [], editions: [{ asin: null }, {}] },
+          { id: 4, title: 'Blank Asins', contributions: [], default_audio_edition: { asin: 'B0DK29VYL1' }, editions: [{ asin: '' }, { asin: '   ' }] },
+        ],
+      }));
+
+      const items = await new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' }).fetchItems();
+
+      expect(items).toHaveLength(4);
+      for (const item of items) expect(item).not.toHaveProperty('alternateAsins');
+    });
+
+    it('collapses canonical duplicates — repeated and padded lower-case twins are one alternate', async () => {
+      const item = await trendingOne({
+        title: 'Duplicated Editions',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: [{ asin: 'B0DK282SYV' }, { asin: 'B0DK282SYV' }, { asin: ' b0dk282syv ' }],
+      });
+
+      expect(item.alternateAsins).toEqual(['B0DK282SYV']);
+    });
+
+    it('emits a surviving candidate verbatim — padding and case are the resolver\'s to normalize', async () => {
+      const item = await trendingOne({
+        title: 'Padded Only',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: [{ asin: ' b0dk282syv ' }],
+      });
+
+      // Admitted because `isAudibleAsin` canonicalizes before testing, then stored exactly as sent.
+      expect(item.alternateAsins).toEqual([' b0dk282syv ']);
+    });
+
+    it('emits every alternate at the cap and drops the overflow beyond it', async () => {
+      const asins = ['B0ALT00001', 'B0ALT00002', 'B0ALT00003', 'B0ALT00004', 'B0ALT00005', 'B0ALT00006'];
+
+      const atCap = await trendingOne({
+        title: 'Five Alternates',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: asins.slice(0, 5).map((asin) => ({ asin })),
+      });
+      expect(atCap.alternateAsins).toEqual(asins.slice(0, 5));
+
+      const overCap = await trendingOne({
+        title: 'Six Alternates',
+        default_audio_edition: { asin: 'B0DK29VYL1' },
+        editions: asins.map((asin) => ({ asin })),
+      });
+      expect(overCap.alternateAsins).toEqual(asins.slice(0, 5));
+    });
+
+    const ALTERNATE_BOOK = {
+      id: 1,
+      title: 'This Inevitable Ruin',
+      contributions: [],
+      default_audio_edition: { asin: 'B0DK29VYL1' },
+      editions: [{ asin: 'B0DK282SYV' }],
+    };
+
+    it('emits alternates on the shelf path, which shares mapBook', async () => {
+      server.use(http.post(GQL_URL, () => HttpResponse.json({ data: { user_books: [{ book: ALTERNATE_BOOK }] } })));
+
+      const items = await new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: 3 }).fetchItems();
+
+      expect(items[0]!.alternateAsins).toEqual(['B0DK282SYV']);
+    });
+
+    it('emits alternates on the custom-list path, which shares mapBook', async () => {
+      server.use(http.post(GQL_URL, () => HttpResponse.json({
+        data: { lists: [{ id: 1, name: 'L', ranked: true, books_count: 1, list_books: [{ id: 1, position: 1, book: ALTERNATE_BOOK }] }] },
+      })));
+
+      const items = await new HardcoverProvider({
+        apiKey: 'test-key', listType: 'custom', listUrl: 'https://hardcover.app/@LisaRae/lists/2025-year-in-books',
+      }).fetchItems();
+
+      expect(items[0]!.alternateAsins).toEqual(['B0DK282SYV']);
+    });
+  });
+
   // Real Hardcover shapes: every contribution is role-tagged and the array is not author-first.
   describe('mapBook — author role selection', () => {
     const trending = () => new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
