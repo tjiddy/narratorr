@@ -68,8 +68,11 @@ export interface ResolveBookDeps {
 }
 
 /**
- * Try a nonblank ASIN, then validate a small title/author search window; format-specific ASIN
- * misses can therefore recover the audiobook edition. Null means a genuine miss, while transient
+ * Probe each supplied identity in order, then validate a small title/author search window;
+ * format-specific ASIN misses can therefore recover the audiobook edition. The list — not the
+ * primary field alone — is the contract: a source's default edition can be real at the retailer and
+ * absent at Audnexus while a sibling on the same payload resolves (#2611). Null means a genuine
+ * miss, while transient
  * provider failures propagate for retry. Several passing candidates are disambiguated on exact
  * title, or held as a miss rather than guessed, because the window is not relevance-ranked and a
  * guess among siblings writes durable metadata onto the wrong book. Exact title naming SEVERAL
