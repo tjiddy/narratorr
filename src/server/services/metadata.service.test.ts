@@ -3,7 +3,12 @@ import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NAR
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { DUPLICATE_EDITIONS_COLLAPSED, MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
-import { AMBIGUOUS_WINDOW_COLLAPSED, AMBIGUOUS_WINDOW_HELD, exactTitleCandidates } from './metadata-resolve-book.js';
+import {
+  ALTERNATE_ASIN_RESOLVED,
+  AMBIGUOUS_WINDOW_COLLAPSED,
+  AMBIGUOUS_WINDOW_HELD,
+  exactTitleCandidates,
+} from './metadata-resolve-book.js';
 import type { BookMetadata } from '@core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
@@ -2684,11 +2689,15 @@ describe('MetadataService.resolveBook', () => {
       service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
 
-    // Active backoff must throw before either provider runs; it is not an ASIN miss.
+    // Active backoff must throw before either provider runs; it is not an ASIN miss. The alternates
+    // change nothing: `enrichBook`'s guard precedes every probe, so the loop cannot walk around it (#2611).
     mockAudnexus.getBook.mockClear();
     mockAudibleProvider.searchBooks.mockClear();
     await expect(
-      service.resolveBook({ asin: 'B0AUDIO2', title: 'Words of Radiance', author: 'Brandon Sanderson' }),
+      service.resolveBook({
+        asin: 'B0AUDIO2', title: 'Words of Radiance', author: 'Brandon Sanderson',
+        alternateAsins: ['B0ALT111111', 'B0ALT222222'],
+      }),
     ).rejects.toBeInstanceOf(RateLimitError);
     expect(mockAudnexus.getBook).not.toHaveBeenCalled();
     expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
@@ -2749,6 +2758,196 @@ describe('MetadataService.resolveBook', () => {
       service.resolveBook({ title: 'Words of Radiance', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
     expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A Hardcover default_audio_edition ASIN can be real at Audible and absent at Audnexus, while a
+   * sibling edition on the same payload resolves. The probe list is the resolver's contract; the
+   * primary is only its first entry (#2611).
+   */
+  describe('alternate ASIN probe loop (#2611)', () => {
+    const alternateMatch: BookMetadata = { ...audiobook, asin: 'B0DK282SYV' };
+
+    it('stops at a resolving primary — one probe, no alternate probe, no search', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(audiobook);
+
+      const result = await service.resolveBook({
+        asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0ALT111111'],
+      });
+
+      expect(result).toEqual(audiobook);
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0AUDIO']);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('falls through a dead primary to the alternate that resolves, without reaching the search', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(null).mockResolvedValueOnce(alternateMatch);
+
+      const result = await service.resolveBook({
+        asin: 'B0DK29VYL1', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0DK282SYV'],
+      });
+
+      expect(result).toEqual(alternateMatch);
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0DK29VYL1', 'B0DK282SYV']);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('keeps walking past a dead first alternate to the second', async () => {
+      mockAudnexus.getBook
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(alternateMatch);
+
+      const result = await service.resolveBook({
+        asin: 'B0DK29VYL1', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0ALT111111', 'B0DK282SYV'],
+      });
+
+      expect(result).toEqual(alternateMatch);
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0DK29VYL1', 'B0ALT111111', 'B0DK282SYV']);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('reaches the title/author search exactly once when every candidate misses, still preferring the PRIMARY ASIN', async () => {
+      // Duplicate listings of one recording, so the collapse must break the tie on the requested
+      // ASIN. `B0AAAA0001` is the lexicographic winner, i.e. what an alternate-preferring — or a
+      // preference-less — chain would return instead (see [[filter-chain-collapse-preempts-resolver-window]]).
+      mockAudnexus.getBook.mockResolvedValue(null);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+        books: [{ ...audiobook, asin: 'B0AAAA0001' }, { ...audiobook, asin: 'B0ZZZZ0001' }],
+      });
+
+      const result = await service.resolveBook({
+        asin: 'B0ZZZZ0001', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0AAAA0001'],
+      });
+
+      expect(result?.asin).toBe('B0ZZZZ0001');
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
+    });
+
+    it('returns null when every candidate AND the search miss, with no probe after the search', async () => {
+      mockAudnexus.getBook.mockResolvedValue(null);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
+
+      const result = await service.resolveBook({
+        asin: 'B0DK29VYL1', title: 'Obscure', author: 'Nobody', alternateAsins: ['B0DK282SYV'],
+      });
+
+      expect(result).toBeNull();
+      expect(mockAudnexus.getBook).toHaveBeenCalledTimes(2);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates a RateLimitError from the first candidate instead of probing the next', async () => {
+      // Continuing would hammer a provider that just answered 429 and would convert a retryable
+      // `pending` row into a durable `failed` one.
+      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+
+      await expect(service.resolveBook({
+        asin: 'B0DK29VYL1', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0DK282SYV'],
+      })).rejects.toBeInstanceOf(RateLimitError);
+
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0DK29VYL1']);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('advances past an ordinary provider failure, which enrichBook has already logged and nulled', async () => {
+      mockAudnexus.getBook
+        .mockRejectedValueOnce(new Error('HTTP 500'))
+        .mockResolvedValueOnce(alternateMatch);
+
+      const result = await service.resolveBook({
+        asin: 'B0DK29VYL1', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0DK282SYV'],
+      });
+
+      expect(result).toEqual(alternateMatch);
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0DK29VYL1', 'B0DK282SYV']);
+    });
+
+    it('drops blanks and canonical duplicates, and dispatches each survivor trimmed but case-preserved', async () => {
+      const paddedMatch: BookMetadata = { ...audiobook, asin: 'b0dk282syv' };
+      mockAudnexus.getBook.mockResolvedValueOnce(null).mockResolvedValueOnce(paddedMatch);
+
+      const result = await service.resolveBook({
+        asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['b0audio', '', '   ', ' b0dk282syv ', 'B0ALT111111'],
+      });
+
+      expect(result).toEqual(paddedMatch);
+      // `AudnexusProvider.getBookDetailed` interpolates this straight into the request path, so the
+      // padding must be gone; canonicalization is the dedup key only, so the case must survive.
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0AUDIO', 'b0dk282syv']);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('behaves exactly as before when the list is absent or empty — one probe, then the search', async () => {
+      mockAudnexus.getBook.mockResolvedValue(null);
+      mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
+
+      await service.resolveBook({ asin: 'B0DK29VYL1', title: 'Obscure', author: 'Nobody' });
+      await service.resolveBook({ asin: 'B0DK29VYL1', title: 'Obscure', author: 'Nobody', alternateAsins: [] });
+
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0DK29VYL1', 'B0DK29VYL1']);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(2);
+    });
+
+    it('caps the probe budget at six including the primary, then searches once', async () => {
+      mockAudnexus.getBook.mockResolvedValue(null);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
+      const alternates = Array.from({ length: 8 }, (_, i) => `B0ALT0000${i}`);
+
+      await service.resolveBook({
+        asin: 'B0DK29VYL1', title: 'Obscure', author: 'Nobody', alternateAsins: alternates,
+      });
+
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0]))
+        .toEqual(['B0DK29VYL1', ...alternates.slice(0, 5)]);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
+    });
+
+    it('probes the alternates in order even with no primary ASIN at all', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(null).mockResolvedValueOnce(alternateMatch);
+
+      const result = await service.resolveBook({
+        title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0ALT111111', 'B0DK282SYV'],
+      });
+
+      expect(result).toEqual(alternateMatch);
+      expect(mockAudnexus.getBook.mock.calls.map((c) => c[0])).toEqual(['B0ALT111111', 'B0DK282SYV']);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('logs the missed primary and the winning alternate in their dispatched form', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(null).mockResolvedValueOnce(alternateMatch);
+
+      await service.resolveBook({
+        asin: ' B0DK29VYL1 ', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: [' b0dk282syv '],
+      });
+
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ primaryAsin: 'B0DK29VYL1', alternateAsin: 'b0dk282syv' }),
+        ALTERNATE_ASIN_RESOLVED,
+      );
+    });
+
+    it('emits no alternate-resolved line when the primary itself resolves', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(audiobook);
+
+      await service.resolveBook({
+        asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson',
+        alternateAsins: ['B0DK282SYV'],
+      });
+
+      expect((mockLog.debug as Mock).mock.calls.filter((call) => call[1] === ALTERNATE_ASIN_RESOLVED)).toEqual([]);
+    });
   });
 });
 

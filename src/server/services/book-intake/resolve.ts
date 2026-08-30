@@ -27,6 +27,8 @@ export interface AddBookSeed {
   title: string;
   author?: string | undefined;
   asin?: string | undefined;
+  /** A lookup hint only — the resolver falls through to these when `asin` misses; never persisted. */
+  alternateAsins?: string[] | undefined;
   isbn?: string | undefined;
   coverUrl?: string | undefined;
   description?: string | undefined;
@@ -121,6 +123,9 @@ async function resolveMatch(
       asin: seed.asin,
       title: seed.title,
       author: seed.author,
+      // Key-absent, not `undefined`: a seed with no alternates must reach the resolver with exactly
+      // the object it receives today, the same reason `enrichmentStatus` is spread above.
+      ...(seed.alternateAsins !== undefined && { alternateAsins: seed.alternateAsins }),
     });
     if (match) {
       logIdentityMismatch(seed, match, identity, log);

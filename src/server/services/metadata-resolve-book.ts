@@ -19,6 +19,8 @@ export interface ResolveBookInput {
   asin?: string | undefined;
   title: string;
   author?: string | undefined;
+  /** Other ASINs naming the same recording, probed in order after `asin` misses. */
+  alternateAsins?: string[] | undefined;
 }
 
 /**
@@ -39,6 +41,19 @@ export const AMBIGUOUS_WINDOW_HELD = 'Ambiguous metadata window held — no uniq
  * rate because a hold silently blocks acquisition, while a resolved window is an ordinary success.
  */
 export const AMBIGUOUS_WINDOW_COLLAPSED = 'Ambiguous metadata window collapsed — duplicate listings of one recording';
+
+/**
+ * Bounds this public port, which any caller may populate — the Hardcover mapper's own
+ * `MAX_ALTERNATE_ASINS` bounds only the array it reads off an external payload. Counts the primary,
+ * so the worst case a missed resolve costs is six Audnexus round-trips against the shared throttle.
+ */
+const MAX_ASIN_PROBES = 6;
+
+/**
+ * Log message for the fall-through win — the only signal an operator has that a source's primary
+ * ASINs are dead at Audnexus while its siblings resolve.
+ */
+export const ALTERNATE_ASIN_RESOLVED = 'Primary ASIN did not resolve; an alternate edition ASIN did';
 
 export interface ResolveBookDeps {
   provider: MetadataSearchProvider | undefined;
@@ -62,10 +77,17 @@ export interface ResolveBookDeps {
  * resolves (#2219), because holding it blocks the row from ever enriching.
  */
 export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput): Promise<BookMetadata | null> {
-  const asin = input.asin?.trim();
-  if (asin) {
-    const match = await deps.enrichBook(asin);
-    if (match) return match;
+  const candidates = probeCandidates(input);
+  for (const [index, candidate] of candidates.entries()) {
+    // A RateLimitError propagates rather than advancing: further probes at a provider that just
+    // answered 429 would turn a retryable `pending` row into a durable `failed` one. Every other
+    // outcome — a miss or a failure `enrichBook` already logged and nulled — tries the next identity.
+    const match = await deps.enrichBook(candidate);
+    if (!match) continue;
+    if (index > 0) {
+      deps.log.debug({ primaryAsin: candidates[0], alternateAsin: candidate, probed: index + 1 }, ALTERNATE_ASIN_RESOLVED);
+    }
+    return match;
   }
 
   const author = input.author?.trim() || undefined;
@@ -79,6 +101,30 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
   if (passing.length === 1) return passing[0]!;
 
   return disambiguateWindow(deps, input, query, passing);
+}
+
+/**
+ * The identities to probe, in order: trim, drop blanks, deduplicate canonically keeping the first
+ * occurrence, then cap. That order matters — capping first would let a padded twin or a blank spend
+ * a probe slot a genuine candidate needed.
+ *
+ * The emitted value is trimmed but case-preserved, because `AudnexusProvider.getBookDetailed`
+ * interpolates it straight into the request path: padding would request `/books/%20b0…%20` and miss.
+ * `canonicalizeAsin` also uppercases, so it is the dedup key only and never reaches the wire.
+ */
+function probeCandidates(input: ResolveBookInput): string[] {
+  const seen = new Set<string>();
+  const probes: string[] = [];
+  for (const raw of [input.asin, ...(input.alternateAsins ?? [])]) {
+    const trimmed = raw?.trim();
+    if (!trimmed) continue;
+    const key = canonicalizeAsin(trimmed);
+    if (key === null || seen.has(key)) continue;
+    seen.add(key);
+    probes.push(trimmed);
+    if (probes.length === MAX_ASIN_PROBES) break;
+  }
+  return probes;
 }
 
 /**
