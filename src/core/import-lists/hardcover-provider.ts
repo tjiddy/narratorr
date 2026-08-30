@@ -53,7 +53,7 @@ const BOOK_FRAGMENT = `
     subtitle
     description
     image { url }
-    contributions { author { name } }
+    contributions { contribution author { name } }
     default_audio_edition { asin isbn_13 isbn_10 image { url } }
     editions { asin isbn_13 isbn_10 }
   }
@@ -133,6 +133,7 @@ const hardcoverBookSchema = z.object({
   description: z.string().nullish(),
   image: z.object({ url: z.string().nullish() }).passthrough().nullish(),
   contributions: z.array(z.object({
+    contribution: z.string().nullish(),
     author: z.object({ name: z.string().nullish() }).passthrough().nullish(),
   }).passthrough()).nullish(),
   default_audio_edition: editionSchema.nullish(),
@@ -199,11 +200,19 @@ function pickIsbn(book: HardcoverBook): string | undefined {
     ?? (book.editions ?? []).map(editionIsbn).find((v) => v !== undefined);
 }
 
+// Contributions come back role-tagged but unordered — position 0 is as often the illustrator or the
+// narrator as the author. Roles are legitimately null on some records, so untagged lists fall back.
+function pickAuthor(book: HardcoverBook): string | undefined {
+  const contributions = book.contributions ?? [];
+  const authored = contributions.find((c) => c.contribution?.toLowerCase() === 'author' && c.author?.name);
+  return (authored ?? contributions[0])?.author?.name || undefined;
+}
+
 function mapBook(book: HardcoverBook): ImportListItem | null {
   if (!book.title) return null;
   return {
     title: book.title,
-    author: book.contributions?.[0]?.author?.name || undefined,
+    author: pickAuthor(book),
     asin: pickAsin(book),
     isbn: pickIsbn(book),
     // Prefer the audiobook cover; fall back to the book's print image.

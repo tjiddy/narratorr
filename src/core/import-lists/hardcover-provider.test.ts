@@ -322,6 +322,123 @@ describe('HardcoverProvider', () => {
     });
   });
 
+  // Real Hardcover shapes: every contribution is role-tagged and the array is not author-first.
+  describe('mapBook — author role selection', () => {
+    const trending = () => new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+
+    it('asks for the contribution role on the shared BookFields fragment', async () => {
+      let body: GqlBody | null = null;
+      server.use(trendingTwoStep({ ids: [1], books: [], onBooks: (b) => { body = b; } }));
+
+      await trending().fetchItems();
+
+      expect(body).not.toBeNull();
+      expect(body!.query).toContain('contributions { contribution author { name } }');
+    });
+
+    it('picks the Author contribution rather than array position 0 (illustrator first)', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'This Inevitable Ruin',
+          contributions: [
+            { contribution: 'Illustrator', author: { name: 'Erik Wilson' } },
+            { contribution: 'Author', author: { name: 'Matt Dinniman' } },
+          ],
+        }],
+      }));
+
+      const items = await trending().fetchItems();
+
+      expect(items[0]!.author).toBe('Matt Dinniman');
+    });
+
+    it('picks the Author over the narrator', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'Mastery',
+          contributions: [
+            { contribution: 'Narrator', author: { name: 'Fred  Sanders' } },
+            { contribution: 'Author', author: { name: 'Robert Greene' } },
+          ],
+        }],
+      }));
+
+      const items = await trending().fetchItems();
+
+      expect(items[0]!.author).toBe('Robert Greene');
+    });
+
+    it('matches the Author role case-insensitively', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'Out of Nothing',
+          contributions: [
+            { contribution: 'Illustrations', author: { name: 'Daniel Locke' } },
+            { contribution: 'author', author: { name: 'David Blandy' } },
+          ],
+        }],
+      }));
+
+      const items = await trending().fetchItems();
+
+      expect(items[0]!.author).toBe('David Blandy');
+    });
+
+    it('falls back to the first contribution when no row carries an Author role', async () => {
+      server.use(trendingTwoStep({
+        ids: [1, 2],
+        books: [
+          { id: 1, title: 'Untagged', contributions: [{ author: { name: 'Andy Weir' } }] },
+          {
+            id: 2,
+            title: 'No Author Role',
+            contributions: [
+              { contribution: 'Introduction', author: { name: 'Adam Rutherford' } },
+              { contribution: 'Illustrations', author: { name: 'Daniel Locke' } },
+            ],
+          },
+        ],
+      }));
+
+      const items = await trending().fetchItems();
+
+      expect(items[0]!.author).toBe('Andy Weir');
+      expect(items[1]!.author).toBe('Adam Rutherford');
+    });
+
+    it('ignores a nameless Author row rather than blanking the author', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'Nameless Author Row',
+          contributions: [
+            { contribution: 'Illustrator', author: { name: 'Erik Wilson' } },
+            { contribution: 'Author', author: null },
+          ],
+        }],
+      }));
+
+      const items = await trending().fetchItems();
+
+      expect(items[0]!.author).toBe('Erik Wilson');
+    });
+
+    it('yields undefined for a book with no contributions at all', async () => {
+      server.use(trendingTwoStep({ ids: [1], books: [{ id: 1, title: 'Nobody', contributions: [] }] }));
+
+      const items = await trending().fetchItems();
+
+      expect(items[0]!.author).toBeUndefined();
+    });
+  });
+
   describe('mapBook — cover resolution (#1634)', () => {
     it('prefers the default_audio_edition cover over the book (print) image', async () => {
       server.use(trendingTwoStep({
