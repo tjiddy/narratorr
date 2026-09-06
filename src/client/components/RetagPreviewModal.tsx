@@ -8,13 +8,14 @@ import {
   type RetagPlan,
   type RetagPlanFile,
   type RetagPlanFileDiff,
+  type RetagPlanOutcome,
 } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/icons';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { FIELD_LABELS, canonicalRows, countApplyFiles, effectiveOutcome, visibleDiffOf } from './RetagPreviewModal.utils';
+import { FIELD_LABELS, canonicalRows, countApplyFiles, countChanges, effectiveOutcome, visibleDiffOf } from './RetagPreviewModal.utils';
 import { ContextBanner, EmptyState, WarningsSection } from './RetagPreviewModal.parts';
 
 export interface RetagConfirmPayload {
@@ -302,10 +303,16 @@ function FileRow({
   excludeSet: Set<RetagExcludableField>;
 }) {
   const outcome = effectiveOutcome(file, excludeSet);
-  const outcomeLabel = formatOutcome(outcome);
+  const changeCount = countChanges(file, excludeSet);
+  const outcomeLabel = formatOutcome(outcome, changeCount, file.coverPending);
   const visibleDiff = visibleDiffOf(file, excludeSet);
-  const dimmedDiff = (file.diff ?? []).filter(d => excludeSet.has(d.field));
-  const isCoverOnly = outcome === 'will-tag' && visibleDiff.length === 0 && file.coverPending;
+  // Changed rows first so the eye lands on what the write is for; excluded rows sink to the bottom.
+  const rows = [
+    ...visibleDiff.filter(d => d.changed).map(diff => ({ diff, dimmed: false })),
+    ...visibleDiff.filter(d => !d.changed).map(diff => ({ diff, dimmed: false })),
+    ...(file.diff ?? []).filter(d => excludeSet.has(d.field)).map(diff => ({ diff, dimmed: true })),
+  ];
+  const isCoverOnly = outcome === 'will-tag' && changeCount === 0 && file.coverPending;
 
   return (
     <li className="rounded-lg border border-border bg-card/40 p-3">
@@ -313,10 +320,9 @@ function FileRow({
         <code className="font-mono break-all">{file.file}</code>
         <span className="text-xs text-muted-foreground shrink-0">{outcomeLabel}</span>
       </div>
-      {file.outcome === 'will-tag' && (visibleDiff.length > 0 || dimmedDiff.length > 0) && (
+      {file.outcome === 'will-tag' && rows.length > 0 && (
         <ul className="mt-2 space-y-1">
-          {visibleDiff.map(d => <DiffRow key={d.field} diff={d} dimmed={false} />)}
-          {dimmedDiff.map(d => <DiffRow key={d.field} diff={d} dimmed={true} />)}
+          {rows.map(({ diff, dimmed }) => <DiffRow key={diff.field} diff={diff} dimmed={dimmed} />)}
         </ul>
       )}
       {isCoverOnly && (
@@ -328,8 +334,18 @@ function FileRow({
 
 function DiffRow({ diff, dimmed }: { diff: RetagPlanFileDiff; dimmed: boolean }) {
   // minmax(0,1fr) lets values shrink below min-content so truncation works at modal width.
+  const rowClass = `text-xs grid grid-cols-[5rem_minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`;
+  if (!diff.changed) {
+    // No arrow and no red/green: the file already carries this value.
+    return (
+      <li className={rowClass}>
+        <span className="text-muted-foreground truncate">{FIELD_LABELS[diff.field]}</span>
+        <span className="col-span-3 text-muted-foreground truncate" title={diff.next ?? undefined}>{diff.next ?? '(empty)'}</span>
+      </li>
+    );
+  }
   return (
-    <li className={`text-xs grid grid-cols-[5rem_minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`}>
+    <li className={rowClass}>
       <span className="text-muted-foreground truncate">{FIELD_LABELS[diff.field]}</span>
       <span className="text-destructive truncate" title={diff.current ?? undefined}>{diff.current ?? '(empty)'}</span>
       <span aria-hidden="true" className="text-muted-foreground">→</span>
@@ -338,9 +354,15 @@ function DiffRow({ diff, dimmed }: { diff: RetagPlanFileDiff; dimmed: boolean })
   );
 }
 
-function formatOutcome(outcome: RetagPlanFile['outcome']): string {
+function formatOutcome(outcome: RetagPlanOutcome, changeCount: number, coverPending: boolean | undefined): string {
   switch (outcome) {
-    case 'will-tag': return 'Will tag';
+    case 'will-tag': {
+      // Zero changes on a will-tag file means the cover is the only pending write.
+      if (changeCount === 0) return 'Cover art only';
+      const changes = `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}`;
+      return coverPending ? `${changes} + cover art` : changes;
+    }
+    case 'skip-unchanged': return 'Skip — already correct';
     case 'skip-populated': return 'Skip — already populated';
     case 'skip-unsupported': return 'Skip — unsupported format';
   }

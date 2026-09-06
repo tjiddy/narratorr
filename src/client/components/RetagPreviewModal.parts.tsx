@@ -1,5 +1,5 @@
 import type { RetagExcludableField, RetagMode, RetagPlan } from '@/lib/api';
-import { canonicalRows } from './RetagPreviewModal.utils';
+import { canonicalRows, effectiveOutcome } from './RetagPreviewModal.utils';
 
 export function ContextBanner({
   plan,
@@ -27,7 +27,7 @@ export function ContextBanner({
         </div>
         <span>
           ({plan.mode === 'overwrite'
-            ? 'replace existing tags with new values'
+            ? 'rewrite files whose tags differ from these values'
             : 'only fill in tags that are currently empty'})
         </span>
       </div>
@@ -108,8 +108,11 @@ export function EmptyState({ plan, excludeSet }: { plan: RetagPlan; excludeSet: 
       </div>
     );
   }
+  const alreadyCorrect = plan.files.some(f => effectiveOutcome(f, excludeSet) === 'skip-unchanged');
   const message = allExcluded
     ? 'You’ve unchecked every field. Include at least one field to re-tag.'
-    : 'All included fields are already populated. Switch to overwrite mode to replace existing values, or include a field that has differing values.';
+    : alreadyCorrect
+      ? 'Every file already carries these values. Nothing needs to be written.'
+      : 'All included fields are already populated. Switch to overwrite mode to replace existing values, or include a field that has differing values.';
   return <p className="text-sm text-muted-foreground text-center py-4">{message}</p>;
 }

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { RetagPreviewModal } from './RetagPreviewModal';
-import { countApplyFiles } from './RetagPreviewModal.utils';
+import { countApplyFiles, effectiveOutcome } from './RetagPreviewModal.utils';
 import { api, RetagDependencyNotConfiguredError, type RetagPlan, type RetagExcludableField, type RetagMode } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -36,9 +36,9 @@ const multiFilePlan: RetagPlan = {
       file: 'ch01.mp3',
       outcome: 'will-tag',
       diff: [
-        { field: 'artist', current: null, next: 'Brandon Sanderson' },
-        { field: 'title', current: 'Chapter 1', next: 'The Way of Kings' },
-        { field: 'track', current: null, next: '1/2' },
+        { field: 'artist', current: null, next: 'Brandon Sanderson', changed: true },
+        { field: 'title', current: 'Chapter 1', next: 'The Way of Kings', changed: true },
+        { field: 'track', current: null, next: '1/2', changed: true },
       ],
       coverPending: false,
     },
@@ -46,9 +46,9 @@ const multiFilePlan: RetagPlan = {
       file: 'ch02.mp3',
       outcome: 'will-tag',
       diff: [
-        { field: 'artist', current: null, next: 'Brandon Sanderson' },
-        { field: 'title', current: 'Chapter 2', next: 'The Way of Kings' },
-        { field: 'track', current: null, next: '2/2' },
+        { field: 'artist', current: null, next: 'Brandon Sanderson', changed: true },
+        { field: 'title', current: 'Chapter 2', next: 'The Way of Kings', changed: true },
+        { field: 'track', current: null, next: '2/2', changed: true },
       ],
       coverPending: false,
     },
@@ -68,7 +68,7 @@ const coverOnlyPlan: RetagPlan = {
     {
       file: 'book.mp3',
       outcome: 'will-tag',
-      diff: [{ field: 'artist', current: 'A', next: 'A' }],
+      diff: [{ field: 'artist', current: 'A', next: 'A', changed: false }],
       coverPending: true,
     },
   ],
@@ -112,10 +112,10 @@ const absFieldsPlan: RetagPlan = {
       file: 'book.mp3',
       outcome: 'will-tag',
       diff: [
-        { field: 'series', current: null, next: 'The Stormlight Archive' },
-        { field: 'seriesPart', current: null, next: '2' },
-        { field: 'asin', current: null, next: 'B00ABCDEFG' },
-        { field: 'genre', current: null, next: 'Fantasy' },
+        { field: 'series', current: null, next: 'The Stormlight Archive', changed: true },
+        { field: 'seriesPart', current: null, next: '2', changed: true },
+        { field: 'asin', current: null, next: 'B00ABCDEFG', changed: true },
+        { field: 'genre', current: null, next: 'Fantasy', changed: true },
       ],
       coverPending: false,
     },
@@ -222,7 +222,7 @@ describe('RetagPreviewModal', () => {
     expect(screen.queryByRole('button', { name: /per-file changes/ })).not.toBeInTheDocument();
   });
 
-  it('mixed plan: excluding a field flips zero-write rows to skip-populated but leaves rows with other diffs labelled Will tag', async () => {
+  it('mixed plan: excluding a field flips zero-write rows to skip-populated but leaves rows with other diffs counting their changes', async () => {
     // ch01 has only artist; ch02 retains title when artist is excluded.
     const mixedPlan: RetagPlan = {
       mode: 'overwrite',
@@ -231,13 +231,13 @@ describe('RetagPreviewModal', () => {
       isSingleFile: false,
       canonical: { artist: 'A', album: 'B', title: 'B' },
       files: [
-        { file: 'ch01.mp3', outcome: 'will-tag', diff: [{ field: 'artist', current: null, next: 'A' }], coverPending: false },
+        { file: 'ch01.mp3', outcome: 'will-tag', diff: [{ field: 'artist', current: null, next: 'A', changed: true }], coverPending: false },
         {
           file: 'ch02.mp3',
           outcome: 'will-tag',
           diff: [
-            { field: 'artist', current: null, next: 'A' },
-            { field: 'title', current: null, next: 'B' },
+            { field: 'artist', current: null, next: 'A', changed: true },
+            { field: 'title', current: null, next: 'B', changed: true },
           ],
           coverPending: false,
         },
@@ -250,11 +250,13 @@ describe('RetagPreviewModal', () => {
 
     await screen.findByRole('heading', { name: /These values will be written/ });
     await user.click(screen.getByRole('button', { name: /Show per-file changes/ }));
-    expect(screen.getAllByText('Will tag')).toHaveLength(2);
+    expect(screen.getByText('1 change')).toBeInTheDocument();
+    expect(screen.getByText('2 changes')).toBeInTheDocument();
 
     await user.click(screen.getByRole('checkbox', { name: 'Include Artist' }));
 
-    expect(screen.getAllByText('Will tag')).toHaveLength(1);
+    expect(screen.getByText('1 change')).toBeInTheDocument();
+    expect(screen.queryByText('2 changes')).not.toBeInTheDocument();
     expect(screen.getByText('Skip — already populated')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Re-tag 1 file/ })).toBeEnabled();
   });
@@ -270,7 +272,7 @@ describe('RetagPreviewModal', () => {
         {
           file: 'book.mp3',
           outcome: 'will-tag',
-          diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }],
+          diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson', changed: true }],
           coverPending: false,
         },
       ],
@@ -281,11 +283,11 @@ describe('RetagPreviewModal', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    expect(screen.getByText('Will tag')).toBeInTheDocument();
+    expect(screen.getByText('1 change')).toBeInTheDocument();
 
     for (const cb of screen.getAllByRole('checkbox', { name: /^Include / })) await user.click(cb);
 
-    expect(screen.queryByText('Will tag')).not.toBeInTheDocument();
+    expect(screen.queryByText('1 change')).not.toBeInTheDocument();
     expect(screen.getByText(/You.ve unchecked every field/)).toBeInTheDocument();
   });
 
@@ -420,7 +422,7 @@ describe('RetagPreviewModal', () => {
       files: [{
         file: 'FortuneFunhouseMissFortuneMysteriesBook19.mp4',
         outcome: 'will-tag',
-        diff: [{ field: 'artist', current: null, next: 'A' }],
+        diff: [{ field: 'artist', current: null, next: 'A', changed: true }],
         coverPending: false,
       }],
       warnings: [],
@@ -475,8 +477,8 @@ describe('RetagPreviewModal', () => {
           file: 'book.mp3',
           outcome: 'will-tag',
           diff: [
-            { field: 'grouping', current: null, next: 'Spellmonger' },
-            { field: 'composer', current: 'Old Reader', next: null },
+            { field: 'grouping', current: null, next: 'Spellmonger', changed: true },
+            { field: 'composer', current: 'Old Reader', next: null, changed: true },
           ],
           coverPending: false,
         },
@@ -639,6 +641,134 @@ describe('RetagPreviewModal', () => {
 
     expect(screen.getByText(/Cover art will be embedded/)).toBeInTheDocument();
   });
+
+  // Overwrite with a file that already carries most values: one real change among unchanged rows.
+  const overwritePlan: RetagPlan = {
+    mode: 'overwrite',
+    embedCover: false,
+    hasCoverFile: false,
+    isSingleFile: true,
+    canonical: { artist: 'Jane Austen', albumArtist: 'Jane Austen', album: 'Persuasion', title: 'Persuasion' },
+    files: [
+      {
+        file: 'book.m4b',
+        outcome: 'will-tag',
+        diff: [
+          { field: 'artist', current: 'Jane Austen', next: 'Jane Austen', changed: false },
+          { field: 'album', current: 'Persuassion', next: 'Persuasion', changed: true },
+          { field: 'title', current: 'Persuasion', next: 'Persuasion', changed: false },
+        ],
+        coverPending: false,
+      },
+    ],
+    warnings: [],
+  };
+
+  it('overwrite: unchanged rows are muted with no before/after, the changed row leads, and the label counts only changes', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(overwritePlan);
+    renderModal();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    expect(screen.getByText('1 change')).toBeInTheDocument();
+    expect(screen.getByText('Persuassion').className).toContain('text-destructive');
+    expect(screen.getAllByText('→')).toHaveLength(1);
+
+    const diffRows = Array.from(document.querySelectorAll('li.grid'));
+    expect(diffRows).toHaveLength(3);
+    expect(diffRows[0]).toHaveTextContent('Album');
+    expect(diffRows[0]).toHaveTextContent('Persuassion');
+    expect(diffRows[1]).toHaveTextContent('Artist');
+    expect(diffRows[1]).toHaveTextContent('Jane Austen');
+    for (const row of diffRows.slice(1)) {
+      expect(row.querySelector('.text-destructive')).toBeNull();
+      expect(row.querySelector('.text-success')).toBeNull();
+      expect(row).not.toHaveTextContent('→');
+      expect(row.querySelector('.col-span-3')?.className).toContain('text-muted-foreground');
+    }
+  });
+
+  it('overwrite: excluding the only changed field empties the apply set and says the files already match', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(overwritePlan);
+    renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    await user.click(screen.getByRole('checkbox', { name: 'Include Album' }));
+
+    expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
+    expect(screen.getByText(/Every file already carries these values/)).toBeInTheDocument();
+    expect(screen.queryByText(/already populated/)).not.toBeInTheDocument();
+  });
+
+  it('a file the server planned as skip-unchanged shows "Skip — already correct" with no rows, beside a file with changes', async () => {
+    const plan: RetagPlan = {
+      ...overwritePlan,
+      isSingleFile: false,
+      files: [
+        { file: 'ch01.m4b', outcome: 'will-tag', diff: [{ field: 'album', current: 'Old', next: 'Persuasion', changed: true }], coverPending: false },
+        { file: 'ch02.m4b', outcome: 'skip-unchanged' },
+      ],
+    };
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(plan);
+    renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    await user.click(screen.getByRole('button', { name: /Show per-file changes/ }));
+
+    expect(screen.getByText('Skip — already correct')).toBeInTheDocument();
+    expect(screen.getByText('1 change')).toBeInTheDocument();
+    expect(document.querySelectorAll('li.grid')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Re-tag 1 file/ })).toBeEnabled();
+  });
+
+  it('labels a pending cover with no differing tags as "Cover art only"', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(coverOnlyPlan);
+    renderModal();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    expect(screen.getByText('Cover art only')).toBeInTheDocument();
+    expect(screen.getByText(/Cover art will be embedded/)).toBeInTheDocument();
+  });
+
+  it('labels changes alongside a pending cover as "N change(s) + cover art"', async () => {
+    const plan: RetagPlan = {
+      ...coverOnlyPlan,
+      files: [{ ...coverOnlyPlan.files[0]!, diff: [{ field: 'artist', current: null, next: 'A', changed: true }] }],
+    };
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(plan);
+    renderModal();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    expect(screen.getByText('1 change + cover art')).toBeInTheDocument();
+    expect(screen.queryByText(/Cover art will be embedded/)).not.toBeInTheDocument();
+  });
+});
+
+describe('effectiveOutcome', () => {
+  const file = {
+    file: 'a.mp3',
+    outcome: 'will-tag' as const,
+    diff: [
+      { field: 'artist' as const, current: 'A', next: 'A', changed: false },
+      { field: 'album' as const, current: 'Old', next: 'New', changed: true },
+    ],
+    coverPending: false,
+  };
+
+  it('stays will-tag while a changed row is included', () => {
+    expect(effectiveOutcome(file, new Set())).toBe('will-tag');
+    expect(effectiveOutcome(file, new Set(['artist']))).toBe('will-tag');
+  });
+
+  it('is skip-unchanged when only matching rows remain, skip-populated when none remain', () => {
+    expect(effectiveOutcome(file, new Set(['album']))).toBe('skip-unchanged');
+    expect(effectiveOutcome(file, new Set(['album', 'artist']))).toBe('skip-populated');
+  });
+
+  it('a pending cover keeps the file will-tag regardless of rows', () => {
+    expect(effectiveOutcome({ ...file, coverPending: true }, new Set(['album', 'artist']))).toBe('will-tag');
+  });
 });
 
 describe('countApplyFiles', () => {
@@ -666,8 +796,26 @@ describe('countApplyFiles', () => {
       files: [
         { file: 'a.mp3', outcome: 'skip-populated' },
         { file: 'b.flac', outcome: 'skip-unsupported' },
+        { file: 'c.mp3', outcome: 'skip-unchanged' },
       ],
     };
     expect(countApplyFiles(plan, new Set())).toBe(0);
+  });
+
+  it('a will-tag file whose remaining rows all match the file is not counted', () => {
+    const plan: RetagPlan = {
+      ...multiFilePlan,
+      files: [{
+        file: 'a.mp3',
+        outcome: 'will-tag',
+        diff: [
+          { field: 'artist', current: 'A', next: 'A', changed: false },
+          { field: 'album', current: 'Old', next: 'New', changed: true },
+        ],
+        coverPending: false,
+      }],
+    };
+    expect(countApplyFiles(plan, new Set())).toBe(1);
+    expect(countApplyFiles(plan, new Set(['album']))).toBe(0);
   });
 });
