@@ -125,9 +125,9 @@ const RETAG_PLAN_FIXTURE = {
     title: 'The Way of Kings',
   },
   files: [
-    { file: 'ch01.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }], coverPending: false },
-    { file: 'ch02.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }], coverPending: false },
-    { file: 'ch03.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }], coverPending: false },
+    { file: 'ch01.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson', changed: true }], coverPending: false },
+    { file: 'ch02.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson', changed: true }], coverPending: false },
+    { file: 'ch03.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson', changed: true }], coverPending: false },
   ],
   warnings: [],
 };
