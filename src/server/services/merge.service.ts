@@ -341,7 +341,7 @@ export class MergeService {
       }
 
       this.updateMergeProgress(bookId, 'committing');
-      const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
+      const { outputPath, warnings: commitWarnings } = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
       // Retag after commit: canonical book.path still contains unmerged parts before then, and staging lacks cover art (#2078).
       const taggingWarnings = await retagMergedOutput({
@@ -360,7 +360,7 @@ export class MergeService {
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged');
       // Reuse the existing message field for warnings without changing the merge_complete contract.
       const mergedSummary = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
-      const allWarnings = [...processingWarnings, ...taggingWarnings];
+      const allWarnings = [...processingWarnings, ...taggingWarnings, ...commitWarnings];
       const message = allWarnings.length > 0
         ? `${mergedSummary} (${allWarnings.join('; ')})`
         : mergedSummary;
@@ -476,7 +476,7 @@ export class MergeService {
     originalsToDelete: string[],
     bookId: number,
     book: { title: string; authors?: Array<{ name: string }> | null },
-  ): Promise<string> {
+  ): Promise<{ outputPath: string; warnings: string[] }> {
     const outputPath = join(bookPath, stagedOutput);
     await rename(join(stagingDir, stagedOutput), outputPath);
 
@@ -498,9 +498,17 @@ export class MergeService {
       bookId, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: bookPath,
     });
 
-    await removeTree(stagingDir);
-
-    return outputPath;
+    // Everything above is the commit. On the unraid NFS export the staged copies just unlinked can
+    // linger as `.fuse_hidden*` for as long as any client still holds them open — minutes, not the
+    // 600 ms removeTree retries — so this cleanup is a warning, never a merge failure: the m4b is in
+    // place and the originals are gone. The next merge of this book resets the dir (runStaging).
+    try {
+      await removeTree(stagingDir);
+      return { outputPath, warnings: [] };
+    } catch (error: unknown) {
+      this.log.warn({ bookId, stagingDir, error: serializeError(error) }, 'Merge committed, but the staging dir could not be removed — leaving it in place');
+      return { outputPath, warnings: [`staging dir left behind: ${basename(stagingDir)}`] };
+    }
   }
 
   /**

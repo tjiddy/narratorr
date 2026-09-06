@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A merge whose m4b is already in place no longer reports `merge_failed` because the hidden `.merge-tmp` staging folder could not be removed. On an unraid NFS export the just-deleted staged copies linger as `.fuse_hidden*` for as long as another client holds them open, far past the removal helper's 600 ms of retries, and that cleanup failure was thrown as the merge's failure, which also skipped the post-merge retag and audio enrichment. Cleanup after the commit is now a warning on the merge's completion message and in the log; the next merge of the same book resets the folder.
 - The recurring production `SIGSEGV` (7+/day by September) is gone at its source (#2615): `@libsql/client` is bumped to 0.18.0, whose sqlite3 backend pools connections instead of abandoning one to garbage collection on every transaction. libsql 0.5.29 segfaults when a statement is finalized before the connection it was prepared on, and 0.17.x's per-transaction detach handed that ordering to V8 thousands of times a day. Reproduced with a plain transaction loop on the production binary and confirmed fixed by the same loop at 0.18.0; the native binding is unchanged. Details, repro and the finalizer-order table: `docs/crash-forensics.md` §8.
 
 ### Changed
