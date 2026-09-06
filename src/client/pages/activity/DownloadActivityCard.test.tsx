@@ -641,4 +641,44 @@ describe('DownloadActivityCard', () => {
       expect(screen.queryByText(/seeders/)).not.toBeInTheDocument();
     });
   });
+
+  describe('book headline (the card names the book, not the release)', () => {
+    const attached = () => createMockDownload({
+      bookId: 42,
+      title: 'Cujo Stephen King [ABB] 64k',
+      book: { id: 42, title: 'Cujo', authors: ['Stephen King'], seriesName: null, seriesPosition: null },
+    });
+
+    it('headlines the book title, linked to the book, and keeps the release name as the tooltip', () => {
+      renderWithProviders(<DownloadActivityCard download={attached()} />);
+      const link = screen.getByRole('link', { name: 'Cujo' });
+      expect(link).toHaveAttribute('href', '/books/42');
+      expect(screen.getByRole('heading', { level: 3 })).toHaveAttribute('title', 'Cujo Stephen King [ABB] 64k');
+      expect(screen.queryByText('Cujo Stephen King [ABB] 64k')).not.toBeInTheDocument();
+    });
+
+    it('shows the author and series byline under the title', () => {
+      const download = createMockDownload({
+        bookId: 7,
+        title: 'The Lone Drow (REQ) - R.A. Salvatore',
+        book: { id: 7, title: 'The Lone Drow', authors: ['R. A. Salvatore'], seriesName: "The Hunter's Blades Trilogy", seriesPosition: 2 },
+      });
+      renderWithProviders(<DownloadActivityCard download={download} />);
+      expect(screen.getByRole('link', { name: 'The Lone Drow' })).toBeInTheDocument();
+      expect(screen.getByText("R. A. Salvatore · The Hunter's Blades Trilogy #2")).toBeInTheDocument();
+    });
+
+    it('renders no byline when the book carries neither authors nor a series', () => {
+      const download = createMockDownload({ bookId: 3, title: 'release', book: { id: 3, title: 'Skeleton Crew', authors: [] } });
+      const { container } = renderWithProviders(<DownloadActivityCard download={download} />);
+      expect(screen.getByRole('link', { name: 'Skeleton Crew' })).toBeInTheDocument();
+      expect(container.querySelector('h3 + p')).toBeNull();
+    });
+
+    it('falls back to the release name, with no tooltip, when no book is attached', () => {
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ bookId: null, book: null, title: 'Orphaned Release' })} />);
+      expect(screen.getByText('Orphaned Release')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 3 })).not.toHaveAttribute('title');
+    });
+  });
 });

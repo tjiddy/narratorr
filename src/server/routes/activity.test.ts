@@ -826,7 +826,8 @@ describe('GET /api/activity — user_cleared_fields never reaches the response (
     const seededBook = createMockDbBook({ userClearedFields: '["genres"]' });
     db.select
       .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-      .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook, indexer: null }]));
+      .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: seededBook, indexer: null }]))
+      .mockReturnValueOnce(mockDbChain([{ bookId: seededBook.id, name: 'Brandon Sanderson' }]));
 
     const realDownloadService = new DownloadService(
       inject<Db>(db),
@@ -835,7 +836,10 @@ describe('GET /api/activity — user_cleared_fields never reaches the response (
     );
     // createMockServices spreads overrides, so preserve the real method's receiver.
     const localServices = createMockServices({
-      download: { getAll: realDownloadService.getAll.bind(realDownloadService) },
+      download: {
+        getAll: realDownloadService.getAll.bind(realDownloadService),
+        getBookAuthorNames: realDownloadService.getBookAuthorNames.bind(realDownloadService),
+      },
     });
     const localApp = await createTestApp(localServices);
 
@@ -848,8 +852,89 @@ describe('GET /api/activity — user_cleared_fields never reaches the response (
       expect(body.data[0].book).toBeDefined();
       expect('userClearedFields' in body.data[0].book).toBe(false);
       expect(body.data[0].book.title).toBe(seededBook.title);
+      expect(body.data[0].book.authors).toEqual(['Brandon Sanderson']);
     } finally {
       await localApp.close();
     }
+  });
+});
+
+describe('activity routes — book author hydration', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices({});
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  describe('book author hydration (the activity cards headline the book, not the release)', () => {
+    const bookRow = { id: 1, title: 'The Way of Kings', seriesName: 'The Stormlight Archive', seriesPosition: 1 };
+    const attached = { ...mockDownload, book: bookRow };
+    const orphan = { ...mockDownload, id: 2, bookId: null };
+    const secondBook = { ...mockDownload, id: 3, bookId: 9, book: { ...bookRow, id: 9, title: 'Warbreaker', seriesName: null, seriesPosition: null } };
+
+    it('GET /api/activity attaches author names to every joined book in one batch and leaves orphans alone', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [attached, orphan, secondBook], total: 3 });
+      (services.download.getBookAuthorNames as Mock).mockResolvedValue(new Map([[1, ['Brandon Sanderson']]]));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(res.statusCode).toBe(200);
+      const { data } = res.json();
+      expect(data[0].book).toEqual({ ...bookRow, authors: ['Brandon Sanderson'] });
+      expect(data[1]).not.toHaveProperty('book');
+      expect(data[2].book.authors).toEqual([]);
+      expect(services.download.getBookAuthorNames).toHaveBeenCalledTimes(1);
+      expect(services.download.getBookAuthorNames).toHaveBeenCalledWith([1, 9]);
+    });
+
+    it('GET /api/activity skips the author lookup when no download has a book', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [orphan], total: 1 });
+      const lookup = services.download.getBookAuthorNames as Mock;
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(res.statusCode).toBe(200);
+      expect(lookup).not.toHaveBeenCalled();
+    });
+
+    it('GET /api/activity/active hydrates the same way', async () => {
+      (services.download.getActive as Mock).mockResolvedValue([attached]);
+      (services.download.getBookAuthorNames as Mock).mockResolvedValue(new Map([[1, ['Brandon Sanderson']]]));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/active' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()[0].book.authors).toEqual(['Brandon Sanderson']);
+      expect(services.download.getBookAuthorNames).toHaveBeenCalledWith([1]);
+    });
+
+    it('GET /api/activity/:id hydrates a single download', async () => {
+      (services.download.getById as Mock).mockResolvedValue(attached);
+      (services.download.getBookAuthorNames as Mock).mockResolvedValue(new Map([[1, ['Brandon Sanderson']]]));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/1' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().book).toEqual({ ...bookRow, authors: ['Brandon Sanderson'] });
+    });
+
+    it('GET /api/activity returns 500 when the author lookup rejects', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [attached], total: 1 });
+      (services.download.getBookAuthorNames as Mock).mockRejectedValue(new Error('authors query failed'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(res.statusCode).toBe(500);
+    });
   });
 });

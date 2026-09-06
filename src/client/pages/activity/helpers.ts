@@ -10,6 +10,7 @@ import {
 } from '@/components/icons';
 import { DOWNLOAD_STATUS_REGISTRY, type DownloadStatusMetadata } from '@shared/download-status-registry.js';
 import type { DownloadStatus } from '@shared/schemas.js';
+import type { DownloadBook } from '@/lib/api';
 
 export interface DownloadStatusConfig {
   icon: React.FC<{ className?: string }>;
@@ -45,3 +46,11 @@ export const statusConfig: Record<string, DownloadStatusConfig> = Object.fromEnt
     ([status, meta]) => [status, toStatusConfig(meta)],
   ),
 );
+
+/** The byline under a download's book title: "Author, Author · Series #3". Null when there is nothing to say. */
+export function describeDownloadBook(book: Pick<DownloadBook, 'authors' | 'seriesName' | 'seriesPosition'>): string | null {
+  const parts: string[] = [];
+  if (book.authors && book.authors.length > 0) parts.push(book.authors.join(', '));
+  if (book.seriesName) parts.push(book.seriesPosition != null ? `${book.seriesName} #${book.seriesPosition}` : book.seriesName);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}

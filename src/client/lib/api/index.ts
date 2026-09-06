@@ -5,7 +5,7 @@ export { RenameConflictError, RetagDependencyNotConfiguredError } from './books.
 export { readAddBookConflict, formatReviewConflictMessage, formatReviewConflictSentence, REVIEW_CONFLICT_LABEL } from './add-book-conflict.js';
 export type { AddBookConflictDetails } from './add-book-conflict.js';
 export type { SearchResult, SearchResponse } from './search.js';
-export type { Download, ActivityCounts, QualityGateData, ActivityListParams } from './activity.js';
+export type { Download, DownloadBook, ActivityCounts, QualityGateData, ActivityListParams } from './activity.js';
 export type { Indexer } from './indexers.js';
 export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
