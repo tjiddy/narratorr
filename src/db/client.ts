@@ -9,6 +9,11 @@ import { runSerializedTransaction } from './serial-transactions.js';
  * would reorder scheduling while removing zero native overlap. That is measured, not read off the
  * driver source — `statement-execution-model.integration.test.ts` pins it and reds if a future driver
  * makes execution genuinely asynchronous (#2595, docs/crash-forensics.md §7).
+ *
+ * `@libsql/client` must stay >= 0.18.0. 0.17.x hands the live native connection to every
+ * `client.transaction()` and lazily opens another, leaving the old one to GC finalization; libsql
+ * 0.5.29 segfaults when a statement is finalized before the connection it was prepared on. That was
+ * the production SIGSEGV. 0.18.0 pools connections and never drops them (docs/crash-forensics.md §8).
  */
 export function createDb(dbPath: string) {
   const client = createClient({

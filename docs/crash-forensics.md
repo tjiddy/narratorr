@@ -290,3 +290,104 @@ Re-run `src/db/statement-execution-model.integration.test.ts`. Every assertion i
 counterfactual — the same probes against a stub client that really awaits — so the absence readings
 are known to be capable of reporting a presence. A red there means this section is stale and the
 serialization question is genuinely open again.
+
+That happened once already: the `@libsql/client` 0.18.0 bump (§8) turned `client.execute` into an
+async facade over a still-synchronous statement, and the span probes went red for that reason
+alone. They now observe the native binding directly, below the client, and the verdict above
+stands re-measured at 0.18.0.
+
+## 8. The crash itself: per-transaction connection churn and finalizer order (#2615)
+
+§7 removed one explanation and left the crash. Between 08-25 and 09-05 the rate climbed from ~3 to
+~7 SIGSEGVs a day, tracking library size and import load rather than only the six-hour cron grid
+(14 cores between 09-03 18:00 and 09-05 12:00 MDT; four of them off-grid during a 400-book import
+and a search-all-wanted run). The mechanism, reproduced on the production binary:
+
+### What `@libsql/client` 0.17.x does on every transaction
+
+`Sqlite3Client.transaction()` (lib-esm/sqlite3.js) runs `BEGIN` on the live native connection,
+hands that connection to the returned `Sqlite3Transaction`, and sets its own handle to `null` — the
+next `client.execute()` lazily opens a **new** native connection. `commit()` and `rollback()` never
+close the old one. It simply goes out of scope, along with every prepared `Statement` executed on
+it, and V8's garbage collector finalizes them later, in whatever order it likes.
+
+So §7's connection inventory ("boot leaves exactly one long-lived connection") was wrong at the
+driver layer: with 33 `db.transaction` sites, every transactional create, import step, enrichment
+write-back and search-all update opened one connection and abandoned another. The cron grid
+correlated because `library-rescan` plus the five-minute jobs are the densest transaction burst.
+
+### Why finalizing them crashes
+
+In libsql-js 0.5.29 (`src/database.rs`, `src/statement.rs`) `Statement` holds an `Arc` clone of
+the `Connection`, `Database` holds the other, and both have an empty `Finalize`. Whichever of the two
+V8 collects last performs the real close. Driving the raw `libsql` binding with 3,000 `(Database,
+Statement)` pairs and controlling the order:
+
+| Finalization order | Result |
+|---|---|
+| Databases first, then their statements | survives (4/4) |
+| Statements first, then their databases | **SIGSEGV** (4/4) |
+| Both unreferenced in the same GC | **SIGSEGV** (2/2) |
+
+Upstream's own report against crate 0.9.30 (tursodatabase/libsql#2264, "use-after-free / double-close
+on local Connection drop") was withdrawn for lack of a repro; this is the repro.
+
+### Reproduction (no concurrency, no cron, no narratorr code)
+
+```js
+const client = createClient({ url: `file:${path}` });            // @libsql/client 0.17.4
+for (let i = 1; i <= 5000; i++) {
+  const tx = await client.transaction('write');
+  await tx.execute({ sql: 'INSERT INTO t (v) VALUES (?)', args: ['y'] });
+  await tx.execute('SELECT id FROM t ORDER BY id DESC LIMIT 3');
+  await tx.commit();
+  await client.execute('SELECT count(*) FROM t');
+  await new Promise((r) => setImmediate(r));                      // let finalizers run, as production does
+}
+```
+
+| Binding / client | Outcome |
+|---|---|
+| win32-x64-msvc, 0.17.4, loop above (natural GC) | SIGSEGV mid-loop, 2/2 |
+| linux-x64-musl **inside the narratorr container**, 0.17.4, same loop | SIGSEGV mid-loop |
+| 0.17.4, no event-loop turn, forced GC every 500 | loop completes, SIGSEGV at exit, 4/4; RSS 597 MB at 3,000 transactions (connections never freed until the loop ends) |
+| 0.17.4, forced GC every 50 iterations | survives — small, orderly finalizer batches; not a production option |
+| **0.18.0**, exact crashing loop, 3 runs | survives, RSS 111 MB |
+| **0.18.0**, 20,000 transactions with the loop turning | survives, RSS 119 MB flat |
+| **0.18.0 inside the narratorr container** (musl, node 24.19), 20,000 transactions with the loop turning | survives, RSS 115 MB flat |
+
+Scripts: `.scratch/segfault-repro/` (gitignored) — `churn-crash2.mjs` (client-level, `YIELD=1`),
+`drop-order.mjs` (raw binding, `MODE=stmt-first`).
+
+### The fix
+
+`@libsql/client` **0.18.0** (2026-09-02, "fix(sqlite3): give a client a connection pool, like the
+hrana clients") replaces detach-and-abandon with a pool: at most `concurrency` (default 20)
+connections, opened lazily, returned on commit/rollback/close, closed only by `client.close()`.
+Under `runSerializedTransaction` narratorr holds two — one for the open transaction, one for the
+statements interleaving with it — for the life of the process, so nothing is ever finalized. Same
+native binding (libsql 0.5.29); the bug upstream is untouched and merely never reached.
+
+Consequences inside this repo:
+
+- `src/db/client.ts` carries the floor (`>= 0.18.0`) and why. A downgrade or a `^0.17` pin brings
+  the crash back within a day.
+- Any future per-connection `PRAGMA` (`busy_timeout`, for instance) must be applied to **every**
+  pooled connection, not once at boot. `journal_mode` is persistent in the file and is fine.
+- §7's span probes moved to the native boundary (`Database.prepare`, `Statement.all`/`run`) because
+  0.18.0's `client.execute` awaits `pool.acquire()` before executing; the statement still blocks the
+  thread for its whole duration. Re-measured wave at 0.18.0: 117 statements, 10 transactions, native
+  occupancy **0.69** of wall time, longest block 2.6 ms; the off-binding counterfactual reads 0.
+- #2606's schedule stagger is no longer a fix candidate. It would lower transaction density at the
+  six-hour mark and nothing else; if it ships at all, ship it in a separate release so the crash
+  telemetry attributes the change correctly.
+- #2598's statement-churn work is performance, not crash mitigation.
+
+### Reading the cores on the host
+
+`coredumpctl list` as a normal user shows narratorr's cores as `inaccessible` and other users' as
+`present`: systemd-coredump grants read on a core to the crashing process's UID, and the container
+runs node as UID 99. The cores are there. `sudo coredumpctl dump <PID> -o <file>` extracts them; the
+ELF walker that mapped the 08-23 core's RIP and stack to `index.node` offsets is a 40-line node
+script (`NT_PRSTATUS` for the faulting thread, `NT_FILE` for the mappings) — see #2595's evidence
+trail. Symbols for the stripped Rust binding still need upstream's build.
