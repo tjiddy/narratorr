@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import os from 'os';
 import { buildCrashLogLine } from './crash-logger.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 describe('buildCrashLogLine', () => {
   it('produces valid JSON', () => {
@@ -64,5 +65,19 @@ describe('buildCrashLogLine', () => {
     expect(() => buildCrashLogLine('msg', null)).not.toThrow();
     expect(() => buildCrashLogLine('msg', undefined)).not.toThrow();
     expect(() => buildCrashLogLine('msg', { custom: 'object' })).not.toThrow();
+  });
+});
+
+describe('T45 — the boot catch does not print a raw error (#2604 AC7)', () => {
+  it('renders the AC3 summary for a leaky drizzle failure', () => {
+    const line = buildCrashLogLine('Failed to start server', makeLeakyDrizzleError());
+    const parsed = JSON.parse(line) as { error: { message: string; type: string } };
+
+    expect(parsed.error.type).toBe('DrizzleQueryError');
+    expect(parsed.error.message).toContain('FOREIGN KEY constraint failed');
+    // The whole line, not just the message: `params` must not have become a field either.
+    expectNoLeak(line);
+    expect(parsed.error).not.toHaveProperty('params');
+    expect(parsed.error).not.toHaveProperty('query');
   });
 });

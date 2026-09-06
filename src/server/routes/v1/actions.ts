@@ -10,7 +10,7 @@ import type { BlacklistService } from '../../services/blacklist.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import type { DownloadOrchestrator, GrabParams } from '../../services/download-orchestrator.js';
 import type { DownloadService } from '../../services/download.service.js';
-import { DuplicateDownloadError } from '../../services/download-errors.js';
+import { DuplicateDownloadError, isBookMissingRefusal } from '../../services/download-errors.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
@@ -124,6 +124,10 @@ function mapGrabError(error: unknown, reply: FastifyReply): FastifyReply | null 
       ? 'Book already has an active download'
       : 'Book already has a download in the import pipeline';
     return reply.status(409).send(envelope(error.code, message));
+  }
+  // The genuine race: `resolveBookOr404` passed, then the book was deleted before the grab.
+  if (isBookMissingRefusal(error)) {
+    return reply.status(404).send(envelope('BOOK_NOT_FOUND', 'Book no longer exists'));
   }
   if (error instanceof DownloadClientAuthError) {
     return reply.status(401).send(envelope('DOWNLOAD_CLIENT_AUTH_FAILED', 'Download client authentication failed'));

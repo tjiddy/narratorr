@@ -31,6 +31,8 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+// Not the hoisted double: the real class is what encodes ApiError's body.error preference.
+import { ApiError as RealApiError } from '@/lib/api/client';
 
 const searchGrab = api.searchGrab as unknown as ReturnType<typeof vi.fn>;
 const toastSuccess = toast.success as unknown as ReturnType<typeof vi.fn>;
@@ -57,6 +59,24 @@ describe('useReplaceGrab (#1857)', () => {
     await waitFor(() => expect(onSuccess).toHaveBeenCalled());
     expect(toastSuccess).toHaveBeenCalled();
     expect(result.current.confirm).toBeNull();
+  });
+
+  // T27 (#2604 AC9). The stimulus is the REAL ApiError, whose constructor prefers `body.error` —
+  // a bare `new Error(sentence)` would pass without observing that half.
+  it('404 book_not_found: toasts the sentence, not the code', async () => {
+    const sentence = 'This book no longer exists — it may have been deleted or merged. Refresh and search again.';
+    searchGrab.mockRejectedValueOnce(new RealApiError(404, { error: sentence, code: 'book_not_found' }));
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
+
+    act(() => result.current.grab(payload));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(toastError).toHaveBeenCalledWith(`Failed to grab: ${sentence}.`);
+    // T28's other half: a 404 must not open the replace-confirm path.
+    expect(result.current.confirm).toBeNull();
+    const [msg] = toastError.mock.calls[0]! as [string];
+    expect(msg).not.toContain('book_not_found');
+    expect(msg).not.toContain('404');
   });
 
   it('ACTIVE_DOWNLOAD_EXISTS: opens a confirm naming the active + selected release', async () => {

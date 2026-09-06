@@ -20,6 +20,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock, singleFlightReplace, canonicalReleaseIdentity } from './book-admission.js';
 import { runReplaceWorkflow, type ReplaceCtx } from './download-replace-workflow.js';
 import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
+import { bookNotFoundError } from './download-errors.js';
 
 
 export interface GrabParams {
@@ -112,16 +113,7 @@ export class DownloadOrchestrator {
 
   /** Unlocked primitive: callers must hold or establish the per-book admission mutex (#1857 F31). */
   private async grabWithinAdmissionLock(params: GrabParams, opts: GrabInnerOpts): Promise<DownloadWithBook> {
-    // Capture pre-grab intent before the download mutates lifecycle state (#1144).
-    let bookStatusAtGrab: BookStatus | null = opts.bookStatusAtGrabOverride ?? null;
-    if (params.bookId && opts.bookStatusAtGrabOverride === undefined) {
-      const row = await this.db
-        .select({ status: books.status })
-        .from(books)
-        .where(eq(books.id, params.bookId))
-        .limit(1);
-      bookStatusAtGrab = (row[0]?.status ?? null) as BookStatus | null;
-    }
+    const bookStatusAtGrab = await this.resolveBookStatusAtGrab(params, opts);
 
     const download = await this.downloadService.grab({ ...params, bookStatusAtGrab });
 
@@ -148,6 +140,33 @@ export class DownloadOrchestrator {
     }));
 
     return download;
+  }
+
+  /**
+   * Captures pre-grab intent (#1144) and refuses a stale reference (#2604 AC1).
+   *
+   * The existence check is unconditional and keyed on `bookId !== undefined`, not truthiness: the
+   * replace path supplies `bookStatusAtGrabOverride` and used to skip the read entirely, which is
+   * how a deleted book's id reached the `downloads` insert and turned an FK violation into a raw
+   * drizzle message carrying every bound param. Refusing here — above `downloadService.grab` —
+   * means no torrent reaches the client and no compensation path is entered.
+   */
+  private async resolveBookStatusAtGrab(params: GrabParams, opts: GrabInnerOpts): Promise<BookStatus | null> {
+    const override = opts.bookStatusAtGrabOverride;
+    if (params.bookId === undefined) return override ?? null;
+
+    // `books.id` is a DB-assigned autoincrement rowid and no insert site supplies one, so a
+    // non-positive id cannot resolve — refuse it without spending a query.
+    if (params.bookId <= 0) throw bookNotFoundError();
+
+    const row = await this.db
+      .select({ status: books.status })
+      .from(books)
+      .where(eq(books.id, params.bookId))
+      .limit(1);
+    if (row.length === 0) throw bookNotFoundError();
+
+    return override !== undefined ? override : ((row[0]?.status ?? null) as BookStatus | null);
   }
 
   /**

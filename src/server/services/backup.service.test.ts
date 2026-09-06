@@ -3,8 +3,7 @@ import fs from 'fs/promises';
 import fss from 'fs';
 import path from 'path';
 import os from 'os';
-import { Readable } from 'stream';
-import { EventEmitter } from 'events';
+import { Readable, Writable } from 'stream';
 import { createClient } from '@libsql/client';
 import type { Db } from '@db/index.js';
 import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
@@ -14,18 +13,28 @@ import { removeTree } from '@core/utils/remove-tree.js';
 // This must stay constructible: production calls `new ZipArchive(...)`, so an arrow-backed vi.fn throws.
 vi.mock('archiver', () => ({
   ZipArchive: vi.fn(function () {
-    let _output: EventEmitter | undefined;
+    let _output: NodeJS.WritableStream | undefined;
     const archive = {
-      pipe: vi.fn((o: EventEmitter) => { _output = o; }),
+      pipe: vi.fn((o: NodeJS.WritableStream) => { _output = o; }),
       file: vi.fn(),
-      finalize: vi.fn(() => {
-        if (_output) setImmediate(() => _output!.emit('close'));
-      }),
+      // Real archiver ends the stream it is piped into, so `close` arrives after the file is on
+      // disk. Synthesizing the event instead raced createWriteStream's async open — under
+      // full-suite I/O load on Windows the stat in create() won and ENOENT'd on a zip whose file
+      // had not been created yet.
+      finalize: vi.fn(() => { _output?.end(); }),
       on: vi.fn((_event: string, _cb: () => void) => archive),
     };
     return archive;
   }),
 }));
+
+/**
+ * Stands in for the zip's write stream. It must be a real Writable, not a bare EventEmitter: the
+ * archiver mock ends it and production resolves on the `close` that follows.
+ */
+function createSinkStream(): fss.WriteStream {
+  return new Writable({ write(_chunk, _encoding, cb) { cb(); } }) as unknown as fss.WriteStream;
+}
 
 const mockExecute = vi.fn();
 const mockClose = vi.fn();
@@ -176,9 +185,7 @@ describe('BackupService', () => {
 
       mkdirSpy = vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
 
-      // The archiver mock emits `close` on this stream.
-      const mockStream = new EventEmitter();
-      createWriteStreamSpy = vi.spyOn(fss, 'createWriteStream').mockReturnValue(mockStream as unknown as fss.WriteStream);
+      createWriteStreamSpy = vi.spyOn(fss, 'createWriteStream').mockReturnValue(createSinkStream());
     });
 
     afterEach(() => {
@@ -199,6 +206,30 @@ describe('BackupService', () => {
       expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('VACUUM INTO'));
       expect(mockClose).toHaveBeenCalled();
 
+      statSpy.mockRestore();
+    });
+
+    it('rejects with the write-stream error instead of emitting it to nobody', async () => {
+      // A stream error with no listener is an uncaught exception, so without the handler this does
+      // not fail the assertion below — it takes the worker process down.
+      const failing = new Writable({
+        write(_chunk, _encoding, cb) { cb(); },
+        final(cb) { cb(Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })); },
+      }) as unknown as fss.WriteStream;
+      createWriteStreamSpy.mockReturnValueOnce(failing);
+      const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
+      const unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValue(undefined);
+
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), createMockDb());
+
+      await expect(service.create()).rejects.toMatchObject({ code: 'ENOSPC' });
+      // The catch arm still runs: both temp paths are cleaned before the error propagates.
+      expect(unlinkSpy.mock.calls.map(([f]) => String(f))).toEqual([
+        expect.stringContaining('backup-temp-'),
+        expect.stringContaining('narratorr-backup-'),
+      ]);
+
+      unlinkSpy.mockRestore();
       statSpy.mockRestore();
     });
 
@@ -1261,9 +1292,7 @@ describe('temp-file cleanup: warn instead of swallow (#2372)', () => {
 
     mkdirSpy = vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
     statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
-    // The archiver mock emits `close` on this stream.
-    const mockStream = new EventEmitter();
-    createWriteStreamSpy = vi.spyOn(fss, 'createWriteStream').mockReturnValue(mockStream as unknown as fss.WriteStream);
+    createWriteStreamSpy = vi.spyOn(fss, 'createWriteStream').mockReturnValue(createSinkStream());
   });
 
   afterEach(async () => {

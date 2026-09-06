@@ -115,9 +115,18 @@ export default tseslint.config(
     },
   },
 
-  // Pino drops raw catch bindings from structured JSON logs.
+  // Pino drops raw catch bindings from structured JSON logs, and `console.error(msg, err)` prints
+  // a driver error's bound params outright. The surface is every non-client runtime directory:
+  // `src/db/migrate.ts` was an unlinted sink while this block was server-only (#2604 AC7/F19).
+  // Note this list is deliberately NOT the `no-console: 'off'` block's above — it needs
+  // `src/shared` (which that one omits) and does not need `e2e/`.
   {
-    files: ['**/src/server/**/*.ts'],
+    files: [
+      '**/src/server/**/*.ts',
+      '**/src/core/**/*.ts',
+      '**/src/shared/**/*.ts',
+      '**/src/db/**/*.ts',
+    ],
     ignores: ['**/*.test.ts'],
     plugins: { narratorr },
     rules: {

@@ -24,6 +24,9 @@ import { fetchWithSsrfRedirect } from '@core/utils/network-service.js';
 import { tmpdir } from 'node:os';
 import { runImmediateSearchChain } from './immediate-search-chain.js';
 import { inject, searchStatus, mockSearchAllWithStatus, answeringSearchStatus, type SearchStatusOverrides } from '../__tests__/helpers.js';
+import { bookNotFoundError } from './download-errors.js';
+import { describeDbError } from '@shared/db-error.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 // Passthrough mocks: only the #2310 stall-class cases override these, so every other test in this
 // file keeps the real implementations.
@@ -5345,5 +5348,98 @@ describe('#2420 — the ABB result shape through the pipeline', () => {
 
       expect(filtered).toHaveLength(1);
     });
+  });
+});
+
+describe('#2604 — a leaky DB error never reaches an SSE payload or a durable row', () => {
+  let indexerSearchService: IndexerSearchService;
+  let downloadOrchestrator: DownloadOrchestrator;
+  let broadcaster: EventBroadcasterService;
+  let blacklistService: BlacklistService;
+  let log: FastifyBaseLogger;
+  let history: EventHistoryService;
+
+  const book = { id: 1716, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+
+  const deps = () => ({
+    indexerSearchService, downloadOrchestrator, qualitySettings: defaultQualitySettings,
+    log, blacklistService, indexerService: mockIndexer, eventHistory: history,
+  });
+
+  const emitted = (event: string) =>
+    (broadcaster.emit as ReturnType<typeof vi.fn>).mock.calls.filter(([name]) => name === event);
+
+  const eventsOfType = (type: string) =>
+    (history.create as ReturnType<typeof vi.fn>).mock.calls.filter(([input]) => input.eventType === type);
+
+  beforeEach(() => {
+    broadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+    history = createMockEventHistory();
+    log = createMockLogger();
+    downloadOrchestrator = { grab: vi.fn() } as unknown as DownloadOrchestrator;
+    indexerSearchService = {
+      searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus([makeResult({ indexerId: 10 })])),
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (_query: string, _options: unknown, _controllers: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+          callbacks.onComplete(10, 'MAM', 1, 500);
+          return [makeResult({ indexerId: 10 })];
+        },
+      ),
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+    } as unknown as IndexerSearchService;
+  });
+
+  it('T20 — the search_complete SSE carries the summary, not the failed query', async () => {
+    vi.mocked(downloadOrchestrator.grab).mockRejectedValue(makeLeakyDrizzleError());
+
+    await searchAndGrabForBook(book, { ...deps(), broadcaster });
+
+    const [, payload] = emitted('search_complete')[0]! as [string, { outcome: string; error_message: string }];
+    expect(payload.outcome).toBe('grab_error');
+    expectNoLeak(payload.error_message);
+    expect(payload.error_message).toContain('FOREIGN KEY constraint failed');
+  });
+
+  it('T21 — the durable grab_failed reason carries the summary', async () => {
+    vi.mocked(downloadOrchestrator.grab).mockRejectedValue(makeLeakyDrizzleError());
+
+    await searchAndGrabForBook(book, deps());
+
+    const [input] = eventsOfType('grab_failed')[0]! as [{ reason: { error: string } }];
+    expectNoLeak(input.reason.error);
+    expect(input.reason.error).toBe(describeDbError(makeLeakyDrizzleError()));
+  });
+
+  it('T22 — the book-missing refusal is a skip, not a grab error', async () => {
+    vi.mocked(downloadOrchestrator.grab).mockRejectedValue(bookNotFoundError());
+
+    const result = await searchAndGrabForBook(book, { ...deps(), broadcaster });
+
+    expect(result).toEqual({ result: 'skipped', reason: 'book_missing' });
+    // The grab_error arm owns both the SSE error payload and the durable write, so neither fires —
+    // which is what makes defect 3's second FK unreachable through this path.
+    const [, payload] = emitted('search_complete')[0]! as [string, { outcome: string }];
+    expect(payload.outcome).toBe('skipped');
+    expect(payload).not.toHaveProperty('error_message');
+    expect(eventsOfType('grab_failed')).toHaveLength(0);
+  });
+
+  it('T23 — a rejecting event recorder does not reject into the caller', async () => {
+    vi.mocked(downloadOrchestrator.grab).mockRejectedValue(new Error('Connection refused'));
+    (history.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('book_events FK'));
+
+    const result = await searchAndGrabForBook(book, deps());
+
+    expect(result.result).toBe('grab_error');
+    // Give the fire-and-forget `.catch(... log.warn ...)` a turn to land.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect((log.warn as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([, msg]) => msg === 'Failed to record grab_failed event',
+    )).toBe(true);
   });
 });

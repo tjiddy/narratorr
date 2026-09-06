@@ -275,14 +275,6 @@ ruleTester.run('no-raw-error-logging', rule, {
       `,
     },
     {
-      name: 'C6 the error is not the first argument of a fatal call',
-      code: `
-        try { foo(); } catch (err) {
-          log.fatal('msg', err);
-        }
-      `,
-    },
-    {
       // The shape all five live `log.trace` sites use — this is what makes the AC1 audit's
       // zero a real zero rather than the rule failing to visit those calls.
       name: 'C1 log.trace with a string-literal first argument',
@@ -313,14 +305,6 @@ ruleTester.run('no-raw-error-logging', rule, {
       code: `
         try { foo(); } catch (err) {
           log.error();
-        }
-      `,
-    },
-    {
-      name: 'C6 the error is not the first argument',
-      code: `
-        try { foo(); } catch (err) {
-          log.error('msg', err);
         }
       `,
     },
@@ -363,13 +347,106 @@ ruleTester.run('no-raw-error-logging', rule, {
     // Scope resolution.
 
     {
+      // The parameter widening (#2604 R5/R6) made the original spelling of this case — an inner
+      // FUNCTION PARAMETER named `e` — a genuine violation, so it moved to `invalid`. The scope
+      // contract it exists for is re-pinned here on a plain local, which is not an error source
+      // under either version of the rule.
       name: 'C9 the innermost scope declaring the name wins over an outer catch',
       code: `
         try { foo(); } catch (e) {
-          function inner(e) {
+          {
+            const e = 1;
             log.error({ error: e }, 'x');
           }
-          inner(1);
+        }
+      `,
+    },
+
+    // Pino's signature is `(mergeObject, message, ...interpolation)`, so arguments 1+ are the
+    // message slot — the all-arguments scan F18 demands is the CONSOLE arm's, not this one.
+    {
+      name: 'C6 the error is not the first argument',
+      code: `
+        try { foo(); } catch (err) {
+          log.error('msg', err);
+        }
+      `,
+    },
+    {
+      name: 'C6 the error is not the first argument of a fatal call',
+      code: `
+        try { foo(); } catch (err) {
+          log.fatal('msg', err);
+        }
+      `,
+    },
+    {
+      name: "a typed handler's rendered message under the error key stays valid",
+      code: `
+        function logHookError(log, error, params) {
+          log.warn({ ...params, error: error.message }, 'Indexer resolveDownloadUrl failed');
+        }
+      `,
+    },
+    {
+      name: 'a Pino message slot reading a parameter member chain stays valid',
+      code: `
+        function handler(error, request, reply) {
+          request.log.warn({ code: 'NOT_FOUND' }, error.message);
+        }
+      `,
+    },
+
+    // #2604 AC7 MUST-NOT-report rows. The table is the contract; these are transcribed literally.
+
+    {
+      name: 'N1 an already-sanitized record cannot regress into a violation',
+      code: `
+        try { foo(); } catch (error) {
+          log.error({ error: serializeError(error) }, 'x');
+        }
+      `,
+    },
+    {
+      name: 'N2 ordinary structured-log objects under a bare identifier (summary)',
+      code: `
+        function report(summary) {
+          log.info(summary, 'x');
+        }
+      `,
+    },
+    {
+      name: 'N2 ordinary structured-log objects under a bare identifier (payload)',
+      code: `
+        function report(payload, msg) {
+          log.warn(payload, msg);
+        }
+      `,
+    },
+    {
+      name: 'N2 ordinary structured-log objects under a bare identifier (logCtx)',
+      code: `
+        function report(logCtx) {
+          log.debug(logCtx, 'x');
+        }
+      `,
+    },
+    {
+      name: 'N3 a typed result-union root is not an error source',
+      code: `
+        const result = doSomething();
+        log.error({ error: result.error }, 'x');
+      `,
+    },
+    {
+      name: 'console with a plain string argument is not a printer leak',
+      code: `console.error('Migrations complete.');`,
+    },
+    {
+      name: 'a console site already routed through getErrorMessage is clean',
+      code: `
+        function report(err) {
+          console.error('Migration failed:', getErrorMessage(err));
         }
       `,
     },
@@ -1097,6 +1174,128 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
+
+    // #2604 AC7 MUST-report rows. Each is a shape some earlier version of this rule left green;
+    // R1/R2 are the load-bearing pair, transcribed from the two live console leaks verbatim.
+
+    {
+      name: "R1 console.error('Failed to start server:', err) — error at argument 1",
+      code: `
+        function boot(err) {
+          console.error('Failed to start server:', err);
+        }
+      `,
+      // Console reports fixless: this site's remedy is `logCrash`, not `serializeError`.
+      output: null,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: "R2 console.error('Migration failed:', err) — error at argument 1",
+      code: `
+        function report(err) {
+          console.error('Migration failed:', err);
+        }
+      `,
+      // Console reports fixless: this site's remedy is `getErrorMessage`, not `serializeError`.
+      output: null,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'R3 an alternate console method',
+      code: `
+        function report(error) {
+          console.info(error);
+        }
+      `,
+      output: null,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'R3 the second Pino receiver',
+      code: `
+        try { foo(); } catch (error) {
+          logger.error(error, 'x');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          logger.error({ error: serializeError(error) }, 'x');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'R4 a bare member chain outside an object',
+      code: `
+        try { foo(); } catch (error) {
+          log.error(error.cause, 'x');
+        }
+      `,
+      // Reported without a fix; zero live sites, and an in-place wrap would collide with the
+      // object arm's fixer for no benefit.
+      output: null,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'R5 an ordinary arrow-callback parameter (Fastify setErrorHandler)',
+      code: `
+        app.setErrorHandler((error, req, reply) => req.log.error(error, 'x'));
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+app.setErrorHandler((error, req, reply) => req.log.error({ error: serializeError(error) }, 'x'));
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'R6 an ordinary named-declaration parameter (v1ErrorHandler)',
+      code: `
+        function v1ErrorHandler(error, req, reply) { req.log.error(error, 'x'); }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+function v1ErrorHandler(error, req, reply) { req.log.error({ error: serializeError(error) }, 'x'); }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'R7 an object property keyed error whose value is named anything',
+      code: `
+        function h(failure) { log.error({ error: failure }, 'x'); }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+function h(failure) { log.error({ error: serializeError(failure) }, 'x'); }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C9 an inner function parameter named e is itself an error source (R5/R6)',
+      code: `
+        try { foo(); } catch (e) {
+          function inner(e) {
+            log.error({ error: e }, 'x');
+          }
+          inner(1);
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (e) {
+          function inner(e) {
+            log.error({ error: serializeError(e) }, 'x');
+          }
+          inner(1);
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
   ],
 });
 
@@ -1444,5 +1643,37 @@ describe('arm interaction', () => {
 
   it('withholds the fold when the file also carries a conflicting serializeError binding', () => {
     expectReportOnly(`const serializeError = 1;\n${objectCall('{error: e, err: e}')}`, 2);
+  });
+});
+
+
+// --- Repository activation (#2604 AC7 / T48) --------------------------------------------
+//
+// A RuleTester suite builds its own flat config, so it cannot prove the rule is ENABLED anywhere.
+// That gap is exactly how `src/db/migrate.ts` came to be an unlinted sink while this block read
+// `['**/src/server/**/*.ts']`. Assert the real config instead.
+
+describe('narratorr/no-raw-error-logging is enabled on every surface AC7 claims', () => {
+  const RULE = 'narratorr/no-raw-error-logging';
+
+  it('covers server, core, shared and db while still ignoring test files', async () => {
+    const config = (await import('../eslint.config.js')).default;
+    const blocks = config.filter((block) => block?.rules?.[RULE]);
+
+    expect(blocks).toHaveLength(1);
+    const [block] = blocks;
+    expect(block.rules[RULE]).toBe('error');
+
+    for (const dir of ['src/server', 'src/core', 'src/shared', 'src/db']) {
+      expect(block.files.some((glob) => glob.includes(`${dir}/`))).toBe(true);
+    }
+    expect(block.ignores).toContain('**/*.test.ts');
+  });
+
+  it('does not lint client code, whose serialization boundary makes it unreachable', async () => {
+    const config = (await import('../eslint.config.js')).default;
+    const [block] = config.filter((c) => c?.rules?.[RULE]);
+
+    expect(block.files.some((glob) => glob.includes('src/client/'))).toBe(false);
   });
 });

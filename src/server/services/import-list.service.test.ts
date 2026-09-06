@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { ImportListService } from './import-list.service.js';
@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { ImportListExclusionService } from './import-list-exclusion.service.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 vi.mock('@core/import-lists/index.js', () => ({
   IMPORT_LIST_ADAPTER_FACTORIES: {
@@ -161,6 +162,21 @@ describe('ImportListService', () => {
       const result = await service.testConfig({ type: 'nyt', settings: { apiKey: 'key' } });
       expect(result.success).toBe(false);
       expect(result.message).toBe('Bad config');
+    });
+
+    // T38 (#2604). The reviewer's scenario: an edit-mode connection test whose saved-settings
+    // lookup throws. `import-list.service.ts` is not edited by this issue — the summary reaches
+    // the result union through `getErrorMessage` alone.
+    it('renders a DB failure from the saved-settings lookup as the summary', async () => {
+      const db = createMockDb();
+      db.select.mockImplementation(() => { throw makeLeakyDrizzleError(); });
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
+
+      const result = await service.testConfig({ type: 'nyt', settings: { apiKey: 'key' }, id: 7 });
+
+      expect(result.success).toBe(false);
+      expectNoLeak(result.message!);
+      expect(result.message).toContain('FOREIGN KEY constraint failed');
     });
 
     describe('sentinel resolution (#827)', () => {
@@ -954,6 +970,103 @@ describe('ImportListService', () => {
           publishedDate: '2020-01-01',
           genres: ['Fantasy'],
         }));
+      });
+
+      // `processItem` hands the whole item through as the seed, so the mapper's alternates reach the
+      // resolver with no code of this service's own — which is exactly what needs pinning (#2611).
+      describe('alternate ASIN hints (#2611)', () => {
+        const syncOne = async (items: unknown[], metadata: MetadataService) => {
+          mockFactories.nyt!.mockReturnValue({ fetchItems: vi.fn().mockResolvedValue(items), test: vi.fn() });
+
+          const db = createMockDb();
+          db.select.mockReturnValue(mockDbChain([dueNytList()]));
+          db.insert.mockReturnValue(mockDbChain([]));
+          db.update.mockReturnValue(mockDbChain([]));
+
+          const create = vi.fn().mockImplementation((data: { title: string }) =>
+            Promise.resolve(createdBook(10, data.title)));
+          service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), metadata);
+          await service.syncDueLists();
+          return create;
+        };
+
+        const resolverReturning = (value: unknown) =>
+          ({ resolveBook: vi.fn().mockResolvedValue(value) } as unknown as MetadataService);
+
+        it('passes an item\'s alternateAsins through to resolveBook intact', async () => {
+          const metadata = resolverReturning(null);
+
+          await syncOne([{
+            title: 'This Inevitable Ruin', author: 'Matt Dinniman',
+            asin: 'B0DK29VYL1', alternateAsins: ['B0DK282SYV'],
+          }], metadata);
+
+          expect(metadata.resolveBook).toHaveBeenCalledWith(expect.objectContaining({
+            asin: 'B0DK29VYL1',
+            title: 'This Inevitable Ruin',
+            alternateAsins: ['B0DK282SYV'],
+          }));
+        });
+
+        it('calls resolveBook with the key ABSENT when the item carries no alternates', async () => {
+          const metadata = resolverReturning(null);
+
+          await syncOne([{ title: 'Plain Item', author: 'Author', asin: 'B0DK29VYL1' }], metadata);
+
+          // `toEqual`-family matchers cannot separate an absent key from a present-`undefined` one.
+          const input = (metadata.resolveBook as Mock).mock.calls[0]![0] as Record<string, unknown>;
+          expect(input).not.toHaveProperty('alternateAsins');
+        });
+
+        it('never writes alternateAsins to BookService.create — it is a lookup hint, not a column', async () => {
+          const metadata = resolverReturning({
+            asin: 'B0DK282SYV', title: 'This Inevitable Ruin', authors: [{ name: 'Matt Dinniman' }],
+          });
+
+          const create = await syncOne([{
+            title: 'This Inevitable Ruin', author: 'Matt Dinniman',
+            asin: 'B0DK29VYL1', alternateAsins: ['B0DK282SYV'],
+          }], metadata);
+
+          const createInput = create.mock.calls[0]![0] as Record<string, unknown>;
+          expect(createInput).not.toHaveProperty('alternateAsins');
+          expect(createInput.asin).toBe('B0DK282SYV');
+        });
+
+        /**
+         * A resolver rejection is contained one layer BELOW the batch loop: `resolveMatch` catches it,
+         * warns, and leaves the row pending from its own raw fields. The batch-level 'Failed to
+         * process import list item' catch is a different seam and must not be what carries this.
+         */
+        it('contains a resolveBook rejection at the resolution layer, still creating the row and the next item\'s', async () => {
+          const metadata = {
+            resolveBook: vi.fn()
+              .mockRejectedValueOnce(new Error('API timeout'))
+              .mockResolvedValueOnce(null),
+          } as unknown as MetadataService;
+
+          const create = await syncOne([
+            { title: 'Rejected Item', author: 'Author', asin: 'B0DK29VYL1', alternateAsins: ['B0DK282SYV'] },
+            { title: 'Following Item', author: 'Author' },
+          ], metadata);
+
+          expect(mockLog.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ title: 'Rejected Item' }),
+            'Metadata enrichment failed',
+          );
+          expect(mockLog.warn).not.toHaveBeenCalledWith(
+            expect.anything(),
+            'Failed to process import list item',
+          );
+
+          const rejectedInput = create.mock.calls[0]![0] as Record<string, unknown>;
+          expect(rejectedInput.title).toBe('Rejected Item');
+          // Key-absent leaves the create primitive's own default (pending); a provider failure is
+          // not evidence of a no-match, so it must not narrow the row to `failed`.
+          expect(rejectedInput).not.toHaveProperty('enrichmentStatus');
+          expect(create.mock.calls.map((call) => (call[0] as { title: string }).title))
+            .toEqual(['Rejected Item', 'Following Item']);
+        });
       });
 
       it('matched item with a mixed-case formatType flows normalized productionType to create (#1731)', async () => {

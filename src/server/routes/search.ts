@@ -2,7 +2,7 @@ import { type FastifyInstance } from 'fastify';
 import { type DownloadOrchestrator } from '../services/download-orchestrator.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
-import { DuplicateDownloadError } from '../services/download-errors.js';
+import { DuplicateDownloadError, isBookMissingRefusal } from '../services/download-errors.js';
 import { DownloadClientError } from '@core/download-clients/errors.js';
 import {
   grabBodySchema,
@@ -39,6 +39,11 @@ export async function searchRoutes(
             return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: active.title }, count: active.count });
           }
           return reply.status(409).send({ code: 'PIPELINE_ACTIVE', reason: error.details.reason });
+        }
+        if (isBookMissingRefusal(error)) {
+          // 404, not 409: the referenced resource is gone, matching `books.ts`'s `Book not found`.
+          request.log.info({ bookId: data.bookId }, 'Grab refused — book no longer exists');
+          return reply.status(404).send({ error: error.message, code: 'book_not_found' });
         }
         if (error instanceof DownloadClientError) {
           // The global handler maps typed client errors to 401, 504, or 502.

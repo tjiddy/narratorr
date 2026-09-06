@@ -15,7 +15,7 @@ export function Modal({ onClose, className = '', scrollable = false, children }:
   // Consumer effects run later and may override this initial focus.
   useFocusTrap(true, panelRef);
   // Missing onClose explicitly opts out of Escape dismissal.
-  useEscapeKey(true, onClose ?? (() => {}), panelRef);
+  useEscapeKey(true, onClose ?? (() => {}));
 
   const panelClasses = [
     'relative glass-card rounded-2xl shadow-2xl animate-fade-in-up outline-none',

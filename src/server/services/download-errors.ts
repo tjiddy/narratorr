@@ -1,11 +1,34 @@
 export class DownloadError extends Error {
   constructor(
     message: string,
-    public code: 'NOT_FOUND' | 'INVALID_STATUS' | 'NO_BOOK_LINKED' | 'IMPORTED_BOOK_NO_RETRY',
+    public code:
+      | 'NOT_FOUND'
+      | 'INVALID_STATUS'
+      | 'NO_BOOK_LINKED'
+      | 'IMPORTED_BOOK_NO_RETRY'
+      | 'BOOK_NOT_FOUND',
   ) {
     super(message);
     this.name = 'DownloadError';
   }
+}
+
+/** One sentence for the refusal, so the route envelopes cannot word it differently (#2604 AC8). */
+export const BOOK_NOT_FOUND_MESSAGE =
+  'This book no longer exists — it may have been deleted or merged. Refresh and search again.';
+
+/**
+ * A grab whose `bookId` no longer resolves. Thrown above every side effect so the dead id never
+ * reaches an insert — at HEAD it did, and the resulting FK failure published the bound params
+ * (including the passkey-bearing download URL) to the client and the logs (#2604 AC1).
+ */
+export function bookNotFoundError(): DownloadError {
+  return new DownloadError(BOOK_NOT_FOUND_MESSAGE, 'BOOK_NOT_FOUND');
+}
+
+/** The non-interactive paths treat this as a skip, not a grab error (#2604 AC10). */
+export function isBookMissingRefusal(error: unknown): error is DownloadError {
+  return error instanceof DownloadError && error.code === 'BOOK_NOT_FOUND';
 }
 
 export type PipelineActiveReason = 'processing' | 'awaiting_review';

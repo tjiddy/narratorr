@@ -8,7 +8,7 @@ import type { IndexerSearchService } from '../services/indexer-search.service.js
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
-import { DuplicateDownloadError } from '../services/download-errors.js';
+import { DuplicateDownloadError, isBookMissingRefusal } from '../services/download-errors.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE } from '../services/search-drop-summary.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
@@ -178,6 +178,8 @@ export async function runRssJob(
     } catch (grabError: unknown) {
       if (grabError instanceof DuplicateDownloadError) {
         log.debug({ bookId }, 'Skipping RSS grab — book already has a blocking download or import');
+      } else if (isBookMissingRefusal(grabError)) {
+        log.debug({ bookId }, 'Skipping RSS grab — book no longer exists');
       } else {
         const message = getErrorMessage(grabError);
         log.info({ bookId, error: message }, 'RSS grab failed (possible concurrent race)');

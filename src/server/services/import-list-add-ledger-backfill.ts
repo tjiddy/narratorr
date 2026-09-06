@@ -12,8 +12,11 @@ export const ADD_LEDGER_BACKFILL_ID = 'import-list-add-ledger-backfill-v1';
  * Seven bound parameters per row against SQLite's 999-parameter statement ceiling. Sized against
  * this table's own column count rather than copied from another repository's id-chunk size, which
  * binds one parameter per row.
+ *
+ * Exported so the chunk-boundary tests can size their candidate counts off the real threshold
+ * instead of a second literal that silently stops straddling it when this one moves (#2601).
  */
-const ROWS_PER_INSERT = 120;
+export const ROWS_PER_INSERT = 120;
 
 /**
  * Seed the add ledger from the library that already exists, once, before the crons arm (#2530).

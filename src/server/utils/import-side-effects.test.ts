@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { notifyImportFailure, recordImportFailedEvent } from './import-side-effects.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 const mockLog = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn(), silent: vi.fn(), level: 'info' } as unknown as FastifyBaseLogger;
 
@@ -182,5 +183,40 @@ describe('recordImportFailedEvent', () => {
       expect.objectContaining({ error: expect.objectContaining({ message: rejection.message, type: 'Error' }) }),
       expect.stringContaining('import_failed'),
     );
+  });
+});
+
+describe('T39 (durable half) — the book_events reason carries no failed query (#2604)', () => {
+  it('records the DB summary rather than the raw drizzle message', async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+
+    recordImportFailedEvent({
+      eventHistory: { create } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'],
+      bookId: 1716,
+      bookTitle: 'Test Book',
+      authorName: 'Author',
+      downloadId: 4,
+      source: 'auto',
+      error: makeLeakyDrizzleError(),
+      log: mockLog,
+    });
+
+    const [input] = create.mock.calls[0]! as [{ reason: { error: string } }];
+    expectNoLeak(input.reason.error);
+    expect(input.reason.error).toContain('FOREIGN KEY constraint failed');
+  });
+
+  it('renders the same summary into the outbound notifier body', () => {
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    notifyImportFailure({
+      notifierService: { notify } as unknown as Parameters<typeof notifyImportFailure>[0]['notifierService'],
+      downloadTitle: 'Test Book',
+      error: makeLeakyDrizzleError(),
+      log: mockLog,
+    });
+
+    const [, payload] = notify.mock.calls[0]! as [string, { error: { message: string } }];
+    expectNoLeak(payload.error.message);
   });
 });

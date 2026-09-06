@@ -5,11 +5,12 @@ import { join } from 'path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
-import { importListExclusions, importLists, settingsMigrations } from '@db/schema.js';
+import { books, importListExclusions, importLists, settingsMigrations } from '@db/schema.js';
 import { BookService } from './book.service.js';
 import { ImportListExclusionService } from './import-list-exclusion.service.js';
-import { ADD_LEDGER_BACKFILL_ID, backfillImportListAddLedger } from './import-list-add-ledger-backfill.js';
+import { ADD_LEDGER_BACKFILL_ID, ROWS_PER_INSERT, backfillImportListAddLedger } from './import-list-add-ledger-backfill.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { spyStatements, type CapturedStatement } from '../__tests__/statement-spy.js';
 
 // A real migrated database throughout: the marker's idempotence, the transaction's atomicity and
 // the empty-slug round trip are all invisible to a mocked db.
@@ -66,6 +67,44 @@ describe('backfillImportListAddLedger (DB-backed, #2530)', () => {
   const ledger = () => db.select().from(importListExclusions);
   const marker = async () =>
     (await db.select().from(settingsMigrations).where(eq(settingsMigrations.id, ADD_LEDGER_BACKFILL_ID))).length > 0;
+
+  /**
+   * Seeds `count` list-sourced books and runs the backfill under one statement spy, so the same
+   * capture covers the seed (client scope) and the backfill's chunk inserts (transaction scope).
+   *
+   * The seed is ONE multi-row insert, not a loop, and must stay that way. libsql statement
+   * execution is synchronous, so 130 sequential single-row inserts cost ~150 ms each on the
+   * disk-bound Windows runner: they carried this file's chunk-boundary case past the 15 s
+   * `testTimeout` on two consecutive tag runs (20,618 ms and 15,769 ms, green on rerun both
+   * times) while measuring 387 ms on Linux, against 50 ms batched. The books are scaffolding —
+   * only the backfill's own chunk loop is under test (#2601). Still not `bookService.create`, for
+   * the original reason: 130 of those would dominate the suite.
+   */
+  async function seedListBooksAndRun(count: number): Promise<{
+    seedInserts: CapturedStatement[];
+    chunkInserts: CapturedStatement[];
+  }> {
+    const spy = spyStatements(db);
+    try {
+      await db.insert(books).values(
+        Array.from({ length: count }, (_, i) => ({ publicId: `bk_${i}`, title: `Book ${i}`, importListId: listId })),
+      );
+      await run();
+    } finally {
+      // Patched by instance assignment, so `vi.restoreAllMocks()` does not undo it; left armed it
+      // would also capture the assertions' own reads.
+      spy.restore();
+    }
+    // Optional quoting on purpose: Drizzle quotes the table, a hand-written `sql` INSERT does not,
+    // and a seed regressed back into a raw loop must be COUNTED by this filter rather than missed
+    // by it — otherwise the count assertion reds on the spelling instead of on the statement count.
+    return {
+      seedInserts: spy.executed.filter((s) => s.scope === 'client' && /insert into "?books"?[\s(]/i.test(s.sql)),
+      chunkInserts: spy.executed.filter(
+        (s) => s.scope !== 'client' && /insert into "?import_list_exclusions"?[\s(]/i.test(s.sql),
+      ),
+    };
+  }
 
   it('seeds one added row per list-sourced book, carrying its identity and provenance', async () => {
     await seedBook({ title: 'The Reckoning', author: 'Jane Doe', asin: ' b0abc12345 ' });
@@ -246,18 +285,42 @@ describe('backfillImportListAddLedger (DB-backed, #2530)', () => {
   });
 
   it('lands every row when the candidate count exceeds one insert chunk', async () => {
-    // 130 > the 120-row chunk size, so the loop runs twice and the chunking is exercised rather
-    // than assumed. Inserted directly: 130 `bookService.create` calls would dominate the suite.
     const COUNT = 130;
-    for (let i = 0; i < COUNT; i++) {
-      await db.run(sql`
-        INSERT INTO books (public_id, title, import_list_id) VALUES (${`bk_${i}`}, ${`Book ${i}`}, ${listId})
-      `);
-    }
+    // Keyed to the real threshold rather than trusting two independent literals: if the chunk size
+    // ever rises past COUNT the loop collapses to one chunk and this case stops covering chunking.
+    expect(COUNT).toBeGreaterThan(ROWS_PER_INSERT);
 
-    await run();
+    const { seedInserts, chunkInserts } = await seedListBooksAndRun(COUNT);
 
+    expect(seedInserts).toHaveLength(1);
+    expect(chunkInserts).toHaveLength(2);
+    // A silently truncated batch would otherwise make the ledger length agree with a short seed.
+    expect(
+      await db.select({ title: books.title, importListId: books.importListId }).from(books).orderBy(books.id),
+    ).toEqual(Array.from({ length: COUNT }, (_, i) => ({ title: `Book ${i}`, importListId: listId })));
     expect(await ledger()).toHaveLength(COUNT);
+  });
+
+  it('lands every row in one chunk insert when the candidate count is exactly the chunk size', async () => {
+    // The negative half of the case above: it proves the 2-statement assertion measures chunk
+    // count rather than reading back a constant.
+    const { seedInserts, chunkInserts } = await seedListBooksAndRun(ROWS_PER_INSERT);
+
+    expect(seedInserts).toHaveLength(1);
+    expect(chunkInserts).toHaveLength(1);
+    expect(await ledger()).toHaveLength(ROWS_PER_INSERT);
+  });
+
+  it('splits into a full chunk and a single-row chunk one candidate over the chunk size', async () => {
+    const { seedInserts, chunkInserts } = await seedListBooksAndRun(ROWS_PER_INSERT + 1);
+
+    expect(seedInserts).toHaveLength(1);
+    expect(chunkInserts).toHaveLength(2);
+    // Bound parameters divide evenly by row, so the trailing chunk's arg count IS its row count —
+    // `chunkArray`'s slice arithmetic pinned at its tightest point.
+    const perRow = (chunkInserts[0]!.args as unknown[]).length / ROWS_PER_INSERT;
+    expect((chunkInserts[1]!.args as unknown[]).length).toBe(perRow);
+    expect(await ledger()).toHaveLength(ROWS_PER_INSERT + 1);
   });
 
   it('opens exactly one transaction, so it cannot nest inside another', async () => {

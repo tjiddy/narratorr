@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { removeDirTolerant } from '../server/__tests__/windows-fs.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,9 +18,9 @@ import { generatePublicId } from '../server/utils/public-id.js';
  *
  * Measured against the pinned versions below. Every assertion here is written so a driver that made
  * execution genuinely asynchronous REDS it rather than passing quietly — that is the point of pinning
- * a verdict by measurement: it expires loudly. See docs/crash-forensics.md §7.
+ * a verdict by measurement: it expires loudly. See docs/crash-forensics.md §7 and §8.
  */
-const MEASURED_AGAINST = '@libsql/client 0.17.4 / libsql 0.5.29 / drizzle-orm 0.45.2';
+const MEASURED_AGAINST = '@libsql/client 0.18.0 / libsql 0.5.29 / drizzle-orm 0.45.2';
 
 /**
  * A recursive-CTE row generator is the only workload that reliably occupies the binding for far
@@ -116,36 +117,110 @@ interface SpanTrace {
   restore: () => void;
 }
 
+type NativeMethod = (this: object, ...args: unknown[]) => unknown;
+type NativePrototype = Record<string, NativeMethod>;
+
 /**
- * Records enter/exit SYNCHRONOUSLY around the call without awaiting it. An await-based wrapper marks
- * every async facade as overlapping and would make the reading vacuous; this one measures how much of
- * the statement happened inside the caller's own synchronous frame, which is exactly the question.
+ * The binding the client actually calls, resolved through the client's own dependency tree so the
+ * prototypes patched below are the instances `@libsql/client` holds — a second copy of `libsql`
+ * would be patched perfectly and observe nothing.
  *
- * Instance assignment, so a transaction handle is instrumented without prototype surgery — the same
- * observation point `src/server/__tests__/statement-spy.ts` uses, because drizzle dispatches
- * in-transaction queries through `tx.execute` and never `client.execute`.
+ * The probe statement stays referenced for the module's lifetime on purpose: libsql 0.5.29 crashes
+ * when a Statement is finalized before the Database it was prepared on (docs/crash-forensics.md §8),
+ * and a throwaway in-memory pair would hand that ordering to the garbage collector.
  */
-function traceSyncSpans(target: Executor): SpanTrace {
-  const original = target.execute.bind(target);
+const nativeBinding = (() => {
+  const requireFromClient = createRequire(createRequire(import.meta.url).resolve('@libsql/client'));
+  const Database = requireFromClient('libsql') as new (path: string) => { prepare: (sql: string) => object };
+  const probeDb = new Database(':memory:');
+  const probeStmt = probeDb.prepare('SELECT 1');
+  return {
+    database: Database.prototype as NativePrototype,
+    statement: Object.getPrototypeOf(probeStmt) as NativePrototype,
+    keepAlive: [probeDb, probeStmt],
+  };
+})();
+
+const labelOf = (sql: unknown) => /'([A-Z])' AS label/.exec(typeof sql === 'string' ? sql : '')?.[1] ?? '?';
+
+/**
+ * Records enter/exit SYNCHRONOUSLY around each call into the native binding — `Database.prepare`
+ * and `Statement.all`/`run`, which is everything `@libsql/client`'s `executeStmt` does with it. This
+ * is the observation point that answers the question, and it is deliberately below the client:
+ * since 0.18.0 `client.execute` awaits a pool acquisition before it executes, so a span recorded
+ * around `client.execute` reads ~0 while the statement itself still blocks the thread for its whole
+ * duration. Below the facade, a synchronous binding reads full spans and an executor whose work
+ * happens elsewhere reads none — the A3 counterfactuals pin that this probe can report absence.
+ *
+ * A statement's label is captured at `prepare` (the only call that sees the SQL) and carried to its
+ * `all`/`run` through a WeakMap, so both native spans of one statement share a label.
+ */
+function traceNativeSpans(): SpanTrace {
   const events: SpanEvent[] = [];
+  const labels = new WeakMap<object, string>();
+  const restores: Array<() => void> = [];
 
-  target.execute = ((stmt: string) => {
-    const label = /'([A-Z])' AS label/.exec(typeof stmt === 'string' ? stmt : String((stmt as { sql?: string })?.sql ?? ''))?.[1] ?? '?';
-    events.push({ label, phase: 'enter', at: performance.now() });
-    const pending = original(stmt);
-    events.push({ label, phase: 'exit', at: performance.now() });
-    return pending;
-  }) as Executor['execute'];
+  const wrap = (proto: NativePrototype, name: string, label: (self: object, args: unknown[]) => string, tag?: (self: object, args: unknown[], result: unknown) => void) => {
+    const original = proto[name];
+    if (typeof original !== 'function') throw new Error(`native binding has no ${name}()`);
+    proto[name] = function (this: object, ...args: unknown[]) {
+      const l = label(this, args);
+      events.push({ label: l, phase: 'enter', at: performance.now() });
+      try {
+        const result = original.apply(this, args);
+        tag?.(this, args, result);
+        return result;
+      } finally {
+        events.push({ label: l, phase: 'exit', at: performance.now() });
+      }
+    };
+    restores.push(() => { proto[name] = original; });
+  };
 
-  return { events, restore: () => { target.execute = original; } };
+  wrap(nativeBinding.database, 'prepare', (_self, args) => labelOf(args[0]), (_self, args, stmt) => {
+    if (stmt !== null && typeof stmt === 'object') labels.set(stmt, labelOf(args[0]));
+  });
+  wrap(nativeBinding.statement, 'all', (self) => labels.get(self) ?? '?');
+  wrap(nativeBinding.statement, 'run', (self) => labels.get(self) ?? '?');
+
+  return { events, restore: () => { for (const restore of restores.reverse()) restore(); } };
 }
 
-const order = (events: SpanEvent[]) => events.map((event) => `${event.phase}${event.label}`);
+/**
+ * True when no native call began while another was still inside the binding. The order
+ * `enterA,exitA,enterB,exitB` that an execute-level trace used to assert is identical for a sync and
+ * an async client; strict alternation at the native boundary is the claim itself.
+ */
+function neverNested(events: SpanEvent[]): boolean {
+  let open: string | null = null;
+  for (const event of events) {
+    if (event.phase === 'enter') {
+      if (open !== null) return false;
+      open = event.label;
+    } else {
+      if (open !== event.label) return false;
+      open = null;
+    }
+  }
+  return open === null;
+}
 
+/** Labels in the order their first native call began. */
+const labelOrder = (events: SpanEvent[]) => [...new Set(events.filter((event) => event.phase === 'enter').map((event) => event.label))];
+
+/** Total native time for a label across its `prepare` and `all`/`run` spans; 0 when nothing reached the binding. */
 function spanOf(events: SpanEvent[], label: string): number {
-  const enter = events.find((event) => event.label === label && event.phase === 'enter')!;
-  const exit = events.find((event) => event.label === label && event.phase === 'exit')!;
-  return exit.at - enter.at;
+  let total = 0;
+  let enteredAt: number | null = null;
+  for (const event of events) {
+    if (event.label !== label) continue;
+    if (event.phase === 'enter') enteredAt = event.at;
+    else if (enteredAt !== null) {
+      total += event.at - enteredAt;
+      enteredAt = null;
+    }
+  }
+  return total;
 }
 
 describe(`libsql statement execution model (measured against ${MEASURED_AGAINST})`, () => {
@@ -206,15 +281,16 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
   });
 
   describe('A1 — two concurrent statements cost the sum, never the max', () => {
-    it('fills the concurrent pair’s wall time with the two statements’ own spans', async () => {
+    it('fills the concurrent pair’s wall time with the two statements’ own native spans', async () => {
       // Within ONE window, never across two: every cross-window wall-clock formulation of this
       // claim flaked on CI, where a second workflow runs this whole suite concurrently on a
       // 2-core runner (separate-window best-of read both<one; interleaved best-of did too).
       // Here numerator and denominator come from the same timeline, so a mid-span preemption
       // charges both sides: serial execution fills the pair's wall with the two spans (~1.0),
-      // genuinely overlapping native work would exceed it (~2.0), an async driver leaves it
-      // empty (~0 — the A3 counterfactual below pins that this assertion can red).
-      const trace = traceSyncSpans(client);
+      // genuinely overlapping native work would exceed it (~2.0), an executor that never enters
+      // the binding on this thread leaves it empty (~0 — the A3 counterfactual below pins that
+      // this assertion can red).
+      const trace = traceNativeSpans();
       const startedAt = performance.now();
       try {
         await Promise.all([
@@ -233,9 +309,9 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
     });
   });
 
-  describe('A1/A2 — the synchronous span covers the whole statement', () => {
+  describe('A1/A2 — the native span covers the whole statement', () => {
     it('never enters a second statement on the connection before the first has exited', async () => {
-      const trace = traceSyncSpans(client);
+      const trace = traceNativeSpans();
       try {
         await Promise.all([
           client.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
@@ -245,16 +321,17 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
         trace.restore();
       }
 
-      expect(order(trace.events)).toEqual(['enterA', 'exitA', 'enterB', 'exitB']);
-      // The whole statement happened inside the caller's synchronous frame — an async driver would
-      // return a pending promise here and leave a span of roughly nothing.
+      expect(labelOrder(trace.events)).toEqual(['A', 'B']);
+      expect(neverNested(trace.events)).toBe(true);
+      // The whole statement happened inside one synchronous native call — a driver whose work ran
+      // off this thread would leave a span of roughly nothing.
       expect(spanOf(trace.events, 'A')).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
       expect(spanOf(trace.events, 'B')).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
     });
 
     it('shows the same signature on a tx handle, which is where drizzle sends in-transaction queries', async () => {
       const tx = await client.transaction();
-      const trace = traceSyncSpans(tx);
+      const trace = traceNativeSpans();
       let measured: Occupancy<unknown>;
       try {
         measured = await measureOccupancy(() =>
@@ -268,7 +345,8 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
         await tx.rollback();
       }
 
-      expect(order(trace.events)).toEqual(['enterA', 'exitA', 'enterB', 'exitB']);
+      expect(labelOrder(trace.events)).toEqual(['A', 'B']);
+      expect(neverNested(trace.events)).toBe(true);
       expect(spanOf(trace.events, 'A')).toBeGreaterThan(OCCUPANCY_FLOOR_MS);
       expect(measured.ticksDuring).toBe(0);
       expect(measured.ticksIdle).toBeGreaterThan(100);
@@ -279,16 +357,17 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
     /**
      * Everything above asserts an absence. Absence assertions are worthless unless the observation
      * point can produce the presence, so the same two probes run against a client whose `execute`
-     * genuinely awaits — the shape a future async driver would have — and both must flip.
+     * genuinely awaits and never enters the binding on this thread — the shape a future async driver
+     * would have — and both must flip.
      */
     const asyncStub = (): Executor => ({
       execute: async (stmt: string) => {
         await new Promise((resolve) => setTimeout(resolve, 60));
-        return { rows: [{ label: /'([A-Z])' AS label/.exec(stmt)?.[1] ?? '?' }] };
+        return { rows: [{ label: labelOf(stmt) }] };
       },
     });
 
-    it('reports loop ticks and a near-zero synchronous span for a genuinely asynchronous execute', async () => {
+    it('reports loop ticks and a near-zero native span for a genuinely asynchronous execute', async () => {
       const stub = asyncStub();
 
       const measured = await measureOccupancy(() => stub.execute(rowGenerator(WORKLOAD_ROWS, 'A')));
@@ -296,29 +375,35 @@ describe(`libsql statement execution model (measured against ${MEASURED_AGAINST}
       // The assertion the real client passes — `ticksDuring === 0` — is false here, so it is load-bearing.
       expect(measured.ticksDuring).toBeGreaterThan(100);
 
-      const trace = traceSyncSpans(stub);
-      await Promise.all([
-        stub.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
-        stub.execute(rowGenerator(WORKLOAD_ROWS, 'B')),
-      ]);
-      trace.restore();
+      const trace = traceNativeSpans();
+      try {
+        await Promise.all([
+          stub.execute(rowGenerator(WORKLOAD_ROWS, 'A')),
+          stub.execute(rowGenerator(WORKLOAD_ROWS, 'B')),
+        ]);
+      } finally {
+        trace.restore();
+      }
 
-      // The span assertion the real client passes is false here too: nothing ran in the sync frame.
+      // The span assertion the real client passes is false here too: nothing reached the binding.
       expect(spanOf(trace.events, 'A')).toBeLessThan(OCCUPANCY_FLOOR_MS);
       expect(spanOf(trace.events, 'B')).toBeLessThan(OCCUPANCY_FLOOR_MS);
     });
 
-    it('leaves the concurrent pair’s wall time empty of synchronous spans', async () => {
+    it('leaves the concurrent pair’s wall time empty of native spans', async () => {
       const stub = asyncStub();
 
-      const trace = traceSyncSpans(stub);
+      const trace = traceNativeSpans();
       const startedAt = performance.now();
-      await Promise.all([stub.execute(rowGenerator(1, 'A')), stub.execute(rowGenerator(1, 'B'))]);
+      try {
+        await Promise.all([stub.execute(rowGenerator(1, 'A')), stub.execute(rowGenerator(1, 'B'))]);
+      } finally {
+        trace.restore();
+      }
       const wall = performance.now() - startedAt;
-      trace.restore();
 
       // The span-fill assertion the real client passes (> 0.75) is false here — overlapping awaits
-      // spend their wall time off-frame, so the spans fill ~none of it.
+      // spend their wall time off the binding, so the spans fill ~none of it.
       expect((spanOf(trace.events, 'A') + spanOf(trace.events, 'B')) / wall).toBeLessThan(0.2);
     });
   });
@@ -331,14 +416,14 @@ interface WaveMeasurement {
   transactionsOpened: number;
   /** Peak statements outstanding at the JS layer, counted enter → settlement. */
   peakStatementsInFlight: number;
-  /** Wall time the process spent inside statement call frames. */
+  /** Wall time the process spent inside native binding calls. */
   bindingOccupancyMs: number;
   /** `bindingOccupancyMs / wallTimeMs`. Near 1 when the binding blocks; near 0 when it does not. */
   bindingOccupancyRatio: number;
-  /** Longest single uninterruptible block — the event loop could not turn for this long. */
+  /** Longest single uninterruptible native call — the event loop could not turn for this long. */
   maxBlockMs: number;
   /**
-   * Median single-call span. Robust to OS preemption charging a scheduling quantum to a span
+   * Median single native call. Robust to OS preemption charging a scheduling quantum to a span
    * (which corrupts a few samples, never a majority) — the sum/ratio figures are not.
    */
   medianBlockMs: number;
@@ -348,16 +433,16 @@ interface WaveMeasurement {
 type WaveTarget = Executor & { transaction: (...args: never[]) => Promise<Executor> };
 
 /**
- * The share of wall time the process must have spent blocked inside statement frames for the wave to
- * count as serial. Measured, not guessed: the real client reads 0.49-0.50 across runs (the remaining
- * half is drizzle query building and service JS between statements, not binding time) and the
- * off-frame executor below reads 0.017-0.021. The floor sits ~2.4x under the real reading and ~10x
- * over the counterfactual, so CI load — which inflates wall time and therefore pushes the real ratio
- * DOWN — has room before it false-reds.
+ * The share of wall time the process must have spent blocked inside the binding for the wave to
+ * count as serial. Measured, not guessed: at the native boundary the real client reads ~0.7 across
+ * runs (the rest is drizzle query building, result mapping and service JS between native calls) and
+ * the off-binding executor below reads exactly 0. The floor sits ~3x under the real reading, so CI
+ * load — which inflates wall time and therefore pushes the real ratio DOWN — has room before it
+ * false-reds.
  */
 const WAVE_OCCUPANCY_FLOOR = 0.2;
 
-/** An executor with the shape a genuinely asynchronous driver would have: nothing runs in the caller's frame. */
+/** An executor with the shape a genuinely asynchronous driver would have: nothing enters the binding on this thread. */
 function asyncWaveTarget(): WaveTarget {
   const executor = (): Executor => ({
     execute: async () => {
@@ -372,24 +457,23 @@ function asyncWaveTarget(): WaveTarget {
  * The peak-in-flight figure alone cannot answer "how much overlap reached the binding": a counter
  * incremented and decremented inside one synchronous frame can never exceed 1 on a single JS thread,
  * so it reads 1 for a synchronous driver AND for an asynchronous one. Occupancy is the quantity that
- * discriminates — how much of the wave's wall time the process spent blocked inside statement call
- * frames. A synchronous binding drives that toward 1; an executor whose work happens off-frame drives
+ * discriminates — how much of the wave's wall time the process spent blocked inside native calls.
+ * A synchronous binding drives that toward 1; an executor whose work happens off this thread drives
  * it toward 0, which is what the counterfactual wave below demonstrates.
  *
- * Instruments `transaction` as well as `execute`, because drizzle dispatches in-transaction queries
- * through the handle and a client-only probe counts them zero times.
+ * Statement volume is still counted at `execute` and `transaction`, because drizzle dispatches
+ * in-transaction queries through the handle and a client-only count sees them zero times. Occupancy
+ * comes from the native boundary, where the client's async facade cannot hide it.
  */
 function measureWave(target: WaveTarget) {
   const originalExecute = target.execute.bind(target);
   const originalTransaction = target.transaction.bind(target);
+  const native = traceNativeSpans();
 
   const captured: { scope: string }[] = [];
   const transactions: string[] = [];
   let inFlight = 0;
   let peakStatementsInFlight = 0;
-  let bindingOccupancyMs = 0;
-  let maxBlockMs = 0;
-  const blocks: number[] = [];
 
   function instrument(executor: Executor, scope: string): void {
     const inner = executor.execute.bind(executor);
@@ -397,17 +481,7 @@ function measureWave(target: WaveTarget) {
       captured.push({ scope });
       inFlight++;
       peakStatementsInFlight = Math.max(peakStatementsInFlight, inFlight);
-      const enteredAt = performance.now();
-      let pending: Promise<unknown>;
-      try {
-        pending = inner(stmt);
-      } finally {
-        const block = performance.now() - enteredAt;
-        bindingOccupancyMs += block;
-        maxBlockMs = Math.max(maxBlockMs, block);
-        blocks.push(block);
-      }
-      return pending.finally(() => { inFlight--; });
+      return inner(stmt).finally(() => { inFlight--; });
     }) as Executor['execute'];
   }
 
@@ -427,6 +501,19 @@ function measureWave(target: WaveTarget) {
       const wallTimeMs = performance.now() - startedAt;
       target.execute = originalExecute;
       target.transaction = originalTransaction;
+      native.restore();
+
+      const blocks: number[] = [];
+      let enteredAt: number | null = null;
+      for (const event of native.events) {
+        if (event.phase === 'enter') enteredAt = event.at;
+        else if (enteredAt !== null) {
+          blocks.push(event.at - enteredAt);
+          enteredAt = null;
+        }
+      }
+      const bindingOccupancyMs = blocks.reduce((sum, block) => sum + block, 0);
+
       return {
         totalStatements: captured.length,
         clientStatements: captured.filter((entry) => entry.scope === 'client').length,
@@ -435,7 +522,7 @@ function measureWave(target: WaveTarget) {
         peakStatementsInFlight,
         bindingOccupancyMs,
         bindingOccupancyRatio: bindingOccupancyMs / wallTimeMs,
-        maxBlockMs,
+        maxBlockMs: blocks.reduce((max, block) => Math.max(max, block), 0),
         medianBlockMs: [...blocks].sort((a, b) => a - b)[Math.floor(blocks.length / 2)] ?? 0,
         wallTimeMs,
       };
@@ -493,8 +580,8 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
     // The JS layer overlaps freely — this figure reads the same for a synchronous and an
     // asynchronous driver, which is exactly why it cannot be the evidence on its own.
     expect(measurement.peakStatementsInFlight).toBeGreaterThan(1);
-    // The discriminating reading: almost the entire wave was the process blocked inside statement
-    // frames, one at a time. The counterfactual wave below drives this same figure to ~0.
+    // The discriminating reading: a large share of the wave was the process blocked inside native
+    // calls, one at a time. The counterfactual wave below drives this same figure to 0.
     expect(measurement.bindingOccupancyRatio).toBeGreaterThan(WAVE_OCCUPANCY_FLOOR);
   });
 
@@ -523,12 +610,13 @@ describe('concurrent wave — statement volume and peak in-flight', () => {
     expect(measurement.transactionsOpened).toBe(10);
     expect(measurement.transactionStatements).toBe(10);
     expect(measurement.peakStatementsInFlight).toBeGreaterThan(1);
-    // ...and yet the probe reads ~nothing per call here. That is what makes it evidence: a broken
-    // (await-based) wrapper would read the full statement duration instead. Median, not the
+    // ...and yet nothing reached the binding. That is what makes it evidence: an execute-level
+    // wrapper that awaited would read the full statement duration instead. Median, not the
     // sum/ratio: on saturated 2-core CI runners (two workflows run this suite concurrently per
     // push) the OS deschedules the process mid-span and charges whole scheduling quanta to a few
     // samples — the ratio read 0.13 and then 0.43 there against a 0.02 idle baseline. A median of
     // 50 spans needs 26 corrupted samples to move, which contention does not produce.
     expect(measurement.medianBlockMs).toBeLessThan(1);
+    expect(measurement.bindingOccupancyMs).toBe(0);
   });
 });

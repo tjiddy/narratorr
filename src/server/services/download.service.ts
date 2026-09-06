@@ -327,7 +327,9 @@ export class DownloadService {
   async setError(id: number, errorMessage: string, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
     // Reset both state axes atomically so a non-idle pipeline row derives as failed.
     await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage });
-    this.log.warn({ id, error: errorMessage }, 'Download error recorded');
+    // Named for what it is: `errorMessage` is an already-rendered string, and under the `error`
+    // key a syntactic rule cannot tell it from a raw error object (#2604 AC7 R7).
+    this.log.warn({ id, errorMessage }, 'Download error recorded');
   }
 
   /** Best-effort delete-files cleanup; replace calls this only after its DB claim commits. */

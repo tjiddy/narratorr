@@ -651,9 +651,11 @@ describe('DownloadService', () => {
 
       await svc.setError(1, 'Disk full');
 
+      // Keyed `errorMessage`, not `error`: the value is an already-rendered string, and under the
+      // `error` key `narratorr/no-raw-error-logging` cannot tell it from a raw error (#2604 AC7).
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, error: 'Disk full' }),
-        expect.any(String),
+        expect.objectContaining({ id: 1, errorMessage: 'Disk full' }),
+        'Download error recorded',
       );
     });
   });

@@ -3945,7 +3945,7 @@ The reason this is worth an entry rather than being self-evident: in the enrichm
 
 ---
 
-**Statement execution in the pinned libsql binding is SYNCHRONOUS and blocks the event loop for its whole duration.** Measured against @libsql/client 0.17.4 / libsql 0.5.29 / drizzle-orm 0.45.2 in #2595 and pinned by `src/db/statement-execution-model.integration.test.ts`; full write-up in `docs/crash-forensics.md` §7.
+**Statement execution in the pinned libsql binding is SYNCHRONOUS and blocks the event loop for its whole duration.** Measured against @libsql/client 0.17.4 / libsql 0.5.29 / drizzle-orm 0.45.2 in #2595, re-measured at @libsql/client 0.18.0 on 2026-09-05, and pinned by `src/db/statement-execution-model.integration.test.ts`; full write-up in `docs/crash-forensics.md` §7–§8.
 
 `Sqlite3Client.execute` and `Sqlite3Transaction.execute` are `async` but await nothing — both call the synchronous better-sqlite3-style `stmt.all()`/`stmt.run()` of the `libsql` npm package. `src/` has no `worker_threads`, so there is one JS thread issuing them.
 
@@ -3964,7 +3964,7 @@ The readings, with a 400k–1M row recursive-CTE workload:
 
 **The number that misleads.** A 50-operation wave through real service code recorded peak **40** promises in flight at the JS layer and peak **1** statement inside the binding. A concurrency audit reading only the first figure concludes there is contention to serialize; there is not. The remaining in-repo lever is peak statement *churn* (117 statements for 50 operations), not statement concurrency.
 
-**Two test-design traps this measurement had to dodge.** (1) An `await`-based `execute` wrapper reports false overlap for any async facade. Record enter/exit **synchronously** around the call (`record enter; const p = orig(...); record exit; return p`) and read the **span** — the *order* `enterA,exitA,enterB,exitB` is identical for a sync and an async driver, so only the span discriminates. (2) A single-sample sum-vs-max ratio is flaky under full-suite load, which inflates the two sides unevenly; sample both with repeated best-of and assert `both > one * 1.6`. Related: [[drizzle-tx-statements-bypass-client-spy]] (why `client.transaction` must be patched too), [[libsql-transactions-serialized-at-the-connection]] (the transaction-level constraint, which is a different fact), [[vacuous-assertion-observation-points]] (the counterfactual stub that proves the probe can detect overlap).
+**Two test-design traps this measurement had to dodge.** (1) An `await`-based `execute` wrapper reports false overlap for any async facade. Record enter/exit **synchronously** around the call and read the **span** — the *order* `enterA,exitA,enterB,exitB` is identical for a sync and an async driver, so only the span discriminates. And wrap the **native binding** (`libsql`'s `Database.prototype.prepare`, `Statement.prototype.all`/`run`, resolved through `@libsql/client`'s own dependency tree), not `client.execute`: since 0.18.0 the client awaits `pool.acquire()` before executing, so an execute-level span reads ~0 for a statement that still blocks the thread for its whole duration — the probe went red on the bump for exactly that reason (§8). (2) A single-sample sum-vs-max ratio is flaky under full-suite load, which inflates the two sides unevenly; sample both with repeated best-of and assert `both > one * 1.6`. Related: [[drizzle-tx-statements-bypass-client-spy]] (why `client.transaction` must be patched too), [[libsql-transactions-serialized-at-the-connection]] (the transaction-level constraint, which is a different fact), [[vacuous-assertion-observation-points]] (the counterfactual stub that proves the probe can detect overlap).
 
 ## await-invalidatequeries-deadlocks-held-refetch
 
@@ -3987,3 +3987,19 @@ await waitFor(() => expect(queryClient.getQueryState(searchKey)?.fetchStatus).to
 **The symptom points away from the cause.** After the timeout, later `it` blocks in the SAME file render an empty `document.body` — RTL prints just the bare container `<div />` — so untouched pre-existing tests fail with 'Unable to find role=dialog'. That reads as shared-state pollution and sends you hunting for a leaking global. Diagnose it by running the suspect test alone with `-t`: if it passes in isolation, the earlier timeout is the cause. Note also that `console.log` inside a vitest test is intercepted by default; probe output needs `--disable-console-intercept`.
 
 Reference: `src/client/components/book/FixSeriesModal.test.tsx`, 'keeps the rendered candidates during a background refetch of the same key' (#2592). Distinct from [[react-query-optimistic-cancel]], which covers `invalidateQueries`' `cancelRefetch: true` default rather than its return promise.
+
+
+## libsql-client-transactions-churn-native-connections
+
+**source:** #2615  
+**added:** 2026-09-05  
+**files:** src/db/client.ts, package.json  
+**tags:** libsql, sigsegv, gc, transactions, dependencies
+
+---
+
+**`@libsql/client` 0.17.x opens and abandons a native connection on every `client.transaction()`, and finalizing the leftovers is the production SIGSEGV.** `Sqlite3Client.transaction()` runs `BEGIN` on the live connection, hands it to the `Sqlite3Transaction`, and nulls its own handle so the next `execute` opens a new one; `commit()` never closes the old one. In libsql-js 0.5.29 each `Statement` holds an `Arc` clone of the connection, so whichever of Database/Statement V8 finalizes last does the real close — and finalizing statements **before** their database segfaults (4/4 in a raw-binding test; database-first survives 4/4). Reproduced with a 10-line transaction loop on Windows and on the musl binary inside the container; §7's "one long-lived connection" inventory was true of narratorr's code and false of the driver under it. Full write-up: `docs/crash-forensics.md` §8.
+
+**Fix: `@libsql/client` >= 0.18.0**, whose sqlite3 backend pools connections (default 20, never dropped). Same native binding, so it is a JS package bump, not a driver change. `src/db/client.ts` carries the floor; a `^0.17` pin or a downgrade brings the crash back within a day.
+
+**How to apply.** (1) Never accept a "connection inventory" that stops at `createClient` call sites — read the client's `transaction()` too. (2) With a pool, per-connection `PRAGMA`s (`busy_timeout`) must be applied to every connection, not once at boot. (3) A crash that tracks a cron grid may be tracking the *transaction density* at that instant; de-stacking schedules (#2606) lowers density and fixes nothing — do not ship it in the same release as a fix, or the telemetry cannot attribute the result. (4) Regression-proof by the repro shape, not by a vitest test: a segfault in a worker reds the whole suite ([[vitest-fork-teardown-crash-reds-green-suite]]); the scripts live in `.scratch/segfault-repro/` and the loop is quoted in §8. Related: [[libsql-statement-execution-is-synchronous]] (the execution-model fact this does not change), [[libsql-transactions-serialized-at-the-connection]], [[node-report-triggers-miss-native-sigsegv]].

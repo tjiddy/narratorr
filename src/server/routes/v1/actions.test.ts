@@ -19,6 +19,7 @@ import type { IndexerService } from '../../services/indexer.service.js';
 import * as searchPipeline from '../../services/search-pipeline.js';
 import * as enrichModule from '../../utils/enrich-usenet-languages.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
+import { bookNotFoundError } from '../../services/download-errors.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { createMockDb, mockDbChain, inject, searchStatus, answeringSearchStatus, captureDeadlineTimers, installMockAppLog } from '../../__tests__/helpers.js';
 import { _resetSearchRegistryForTesting } from '../../services/search-deadline.js';
@@ -1098,6 +1099,23 @@ describe('v1 action routes (search + grab)', () => {
       expect(body.error.code).toBe('PIPELINE_ACTIVE');
       expect(body.error.message).toBe('Book already has a download in the import pipeline');
       expect(body.error.message).not.toContain('active download');
+    });
+
+    // T24 — the two envelope conventions must stay visibly distinct: v1 is UPPER_SNAKE with a
+    // fixed sentence, the internal route is lower_snake with the shared sentence (search.test.ts T16).
+    it('answers a book-missing refusal after resolveBookOr404 with a 404 BOOK_NOT_FOUND envelope', async () => {
+      (downloadOrchestrator.grab as Mock).mockRejectedValue(bookNotFoundError());
+
+      const res = await grab();
+
+      expect(res.statusCode).toBe(404);
+      const body = res.json();
+      expectV1Envelope(body);
+      expect(body.error.code).toBe('BOOK_NOT_FOUND');
+      expect(body.error.message).toBe('Book no longer exists');
+      // Not the internal convention: no lower_snake `code`, no bare `error` string.
+      expect(body).not.toHaveProperty('code');
+      expect(typeof body.error).toBe('object');
     });
 
     it.each([

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useEscapeKey } from './useEscapeKey';
-import { type RefObject } from 'react';
 
 describe('useEscapeKey', () => {
   afterEach(() => {
@@ -65,14 +64,24 @@ describe('useEscapeKey', () => {
     expect(onEscape).not.toHaveBeenCalled();
   });
 
-  it('focuses focusRef.current when isOpen is true', () => {
-    const onEscape = vi.fn();
-    const focusEl = { focus: vi.fn() };
-    const focusRef = { current: focusEl } as unknown as RefObject<HTMLElement>;
+  it('keeps one stable listener and dispatches to the LATEST callback across identity changes (#2605)', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener');
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = renderHook(({ cb }: { cb: () => void }) => useEscapeKey(true, cb), {
+      initialProps: { cb: first },
+    });
+    const keydownRegistrations = () => addSpy.mock.calls.filter((c) => c[0] === 'keydown').length;
+    const afterMount = keydownRegistrations();
 
-    renderHook(() => useEscapeKey(true, onEscape, focusRef));
+    rerender({ cb: second });
 
-    expect(focusEl.focus).toHaveBeenCalledTimes(1);
+    // A re-render with a new callback identity must NOT tear down and re-arm the effect — that
+    // churn is what let a per-render side effect steal modal focus on every SSE tick (#2605).
+    expect(keydownRegistrations()).toBe(afterMount);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   describe('defaultPrevented gating', () => {
@@ -136,11 +145,4 @@ describe('useEscapeKey', () => {
     });
   });
 
-  it('does not throw when focusRef is undefined', () => {
-    const onEscape = vi.fn();
-
-    expect(() => {
-      renderHook(() => useEscapeKey(true, onEscape, undefined));
-    }).not.toThrow();
-  });
 });

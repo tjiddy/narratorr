@@ -58,6 +58,7 @@ import { stat, rm } from 'node:fs/promises';
 import { retrySearch } from './retry-search.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 const mockAdapter = {
   removeDownload: vi.fn().mockResolvedValue(undefined),
@@ -246,6 +247,23 @@ describe('QualityGateOrchestrator', () => {
 
       expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       expect(qualityGateService.processDownload).not.toHaveBeenCalled();
+    });
+
+    // T40 (#2604). `probeError` is polled by the client and rendered in QualityComparisonPanel.
+    // This site is not edited by the issue — it proves AC6 closed an unmodified consumer.
+    it('records the DB summary as probeError, not the failed query', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockRejectedValue(makeLeakyDrizzleError());
+
+      await orchestrator.processCompletedDownloads();
+
+      const reason = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0].reason as {
+        probeFailure: boolean; probeError: string;
+      };
+      expect(reason.probeFailure).toBe(true);
+      expectNoLeak(reason.probeError);
+      expect(reason.probeError).toContain('FOREIGN KEY constraint failed');
     });
 
     it('sets pending_review via service.setStatus when scanAudioDirectory throws', async () => {

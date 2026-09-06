@@ -11,6 +11,8 @@ import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
 import { IndexerError } from '@core/indexers/errors.js';
+import { bookNotFoundError } from '../services/download-errors.js';
+import { expectNoLeak, makeLeakyDrizzleError } from '../__tests__/drizzle-error.fixture.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -362,6 +364,55 @@ describe('runRssJob', () => {
       'RSS feed returned zero items',
     );
     expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  // T33 (#2604 L5). No site edit — `getErrorMessage` already rendered here; this proves the
+  // chokepoint reaches an unmodified consumer, and that the swallow semantics are unchanged.
+  it('renders a leaky DB grab failure as the summary and still processes the next book', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author'), makeWantedBook(2, 'Other Book', 'Author')];
+    const rssResults = [makeResult('Test Book', 'Author'), makeResult('Other Book', 'Author')];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    (download.grab as Mock).mockImplementation(async (params: { bookId: number }) => {
+      if (params.bookId === 1) throw makeLeakyDrizzleError();
+      return { id: 2 };
+    });
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    const record = (log.info as Mock).mock.calls.find(
+      ([, msg]) => msg === 'RSS grab failed (possible concurrent race)',
+    )![0] as { error: string };
+    expectNoLeak(record.error);
+    expect(record.error).toContain('FOREIGN KEY constraint failed');
+    // The loop must still advance: swallow semantics unchanged.
+    expect(result.grabbed).toBe(1);
+  });
+
+  it('T33b — a book-missing refusal is a debug skip, not a grab failure (AC10)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [makeResult('Test Book', 'Author')];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    (download.grab as Mock).mockRejectedValue(bookNotFoundError());
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Skipping RSS grab — book no longer exists',
+    );
+    expect(log.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'RSS grab failed (possible concurrent race)',
+    );
   });
 
   it('catches concurrent grab race and logs info', async () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { Modal } from '@/components/Modal';
 
 describe('Modal', () => {
@@ -169,6 +170,30 @@ describe('Modal', () => {
       first.focus();
       await user.keyboard('{Shift>}{Tab}{/Shift}');
       expect(document.activeElement).toBe(second);
+    });
+
+    it('keeps focus in a child input when a parent re-render changes the onClose identity (#2605)', () => {
+      // The live shape: a book page re-rendering on every SSE activity tick hands Modal a fresh
+      // inline onClose each time; the caret must survive that churn.
+      let bump!: () => void;
+      function Harness() {
+        const [, setTick] = useState(0);
+        bump = () => setTick((t) => t + 1);
+        return (
+          <Modal onClose={() => {}}>
+            <input aria-label="query" />
+          </Modal>
+        );
+      }
+      render(<Harness />);
+      const input = screen.getByLabelText('query');
+      act(() => input.focus());
+      expect(document.activeElement).toBe(input);
+
+      act(() => bump());
+      act(() => bump());
+
+      expect(document.activeElement).toBe(input);
     });
 
     it('Modal with no focusable children keeps focus on panel container (does not escape)', async () => {

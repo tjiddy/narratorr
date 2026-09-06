@@ -180,7 +180,10 @@ async function main() {
   app.log.info({ port: config.port }, 'Server running');
 }
 
-main().catch((err) => {
-  console.error('Failed to start server:', err);
+main().catch((err: unknown) => {
+  // `console.error(msg, err)` prints own enumerable properties via `util.inspect`, so a
+  // DrizzleQueryError raised by `runMigrations` or `migrateSecretsToEncrypted` would print its
+  // full `query` and `params` here — neither chokepoint on the path (#2604 AC7).
+  logCrash('Failed to start server', err);
   process.exit(1);
 });
