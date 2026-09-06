@@ -282,9 +282,13 @@ export function stripNonCode(source: string): string {
   return out;
 }
 
-/** A member chain ending in `.message`, matching `?.` and `!.` receivers as well as plain ones. */
+/**
+ * A member chain ending in `.message`, matching `?.` and `!.` receivers as well as plain ones. The
+ * non-null `!` is part of the dot segment, never its own alternative: a standalone `!` next to `!\.`
+ * makes `!.` match two ways per repetition, which CodeQL flags as exponential backtracking (js/redos).
+ */
 const CHAIN_RE =
-  /[A-Za-z_$][A-Za-z0-9_$]*(?:\s*(?:\?\.|!\.|\.)\s*[A-Za-z_$][A-Za-z0-9_$]*|\s*\[[^\]\n]*\]|!)*\s*(?:\?\.|!\.|\.)\s*message\b/g;
+  /[A-Za-z_$][A-Za-z0-9_$]*(?:\s*(?:!\s*)?(?:\?\.|\.)\s*[A-Za-z_$][A-Za-z0-9_$]*|\s*\[[^\]\n]*\])*\s*(?:!\s*)?(?:\?\.|\.)\s*message\b/g;
 const ANY_MESSAGE_RE = /\.message\b/g;
 
 /**
