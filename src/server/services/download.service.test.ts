@@ -2609,3 +2609,43 @@ describe('DownloadService — user_cleared_fields is projected out (#2069 AC16)'
     expect(row!.book!.id).toBe(seededBook.id);
   });
 });
+
+describe('DownloadService.getBookAuthorNames', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: DownloadService;
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new DownloadService(db as unknown as Db, {} as unknown as DownloadClientService, createMockLogger() as unknown as FastifyBaseLogger);
+  });
+
+  it('groups author names by book in credit order', async () => {
+    db.select.mockReturnValue(mockDbChain([
+      { bookId: 1, name: 'R. A. Salvatore' },
+      { bookId: 2, name: 'Ilona Andrews' },
+      { bookId: 2, name: 'Gordon Andrews' },
+    ]));
+
+    const names = await service.getBookAuthorNames([1, 2, 3, 2]);
+
+    expect(names.get(1)).toEqual(['R. A. Salvatore']);
+    expect(names.get(2)).toEqual(['Ilona Andrews', 'Gordon Andrews']);
+    expect(names.has(3)).toBe(false);
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('issues no query for an empty input', async () => {
+    const names = await service.getBookAuthorNames([]);
+
+    expect(names.size).toBe(0);
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('splits a large id set into 480-id chunks', async () => {
+    db.select.mockReturnValue(mockDbChain([]));
+
+    await service.getBookAuthorNames(Array.from({ length: 481 }, (_, i) => i + 1));
+
+    expect(db.select).toHaveBeenCalledTimes(2);
+  });
+});
