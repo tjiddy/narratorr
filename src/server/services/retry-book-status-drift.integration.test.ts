@@ -13,9 +13,9 @@ import { DownloadOrchestrator } from './download-orchestrator.js';
 import { QualityGateService } from './quality-gate.service.js';
 import { QualityGateOrchestrator } from './quality-gate-orchestrator.js';
 import { RetryBudget } from './retry-budget.js';
+import { ImportService } from './import.service.js';
+import { ImportOrchestrator } from './import-orchestrator.js';
 import { transitionDownloadState } from '../utils/download-state.js';
-import { handleImportFailure } from '../utils/import-steps.js';
-import { REVERT_FALLBACK_STATUS } from '../utils/book-status.js';
 import { monitorDownloads } from '../jobs/monitor.js';
 import { retrySearch } from './retry-search.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -164,25 +164,46 @@ describe('fail → retry → revert, against a migrated DB (#2622)', () => {
     expect(await bookStatus(bookId)).toBe('wanted');
   });
 
-  it('fail → retry → import failure reverts to the normalized capture, and the SSE cannot fall back to imported', async () => {
+  /**
+   * Both consumers of the persisted column on this path run for real: `ImportService` reverts the
+   * book through `handleImportFailure`, and `ImportOrchestrator.dispatchFailureSideEffects` puts the
+   * same snapshot on the wire. Asserting the emitted event rather than re-deriving
+   * `bookStatusAtGrab ?? REVERT_FALLBACK_STATUS` in the test is what makes deleting or re-arguing
+   * `emitImportFailure` (`import-orchestrator.ts:284`) visible here.
+   *
+   * The failure is a vanished client item — the shape of the City of Ashes #3161 incident — and
+   * deliberately a plain `Error`: a `ContentFailureError` would instead fire the detached
+   * blacklist-and-research arm and grab a second replacement mid-assertion.
+   */
+  it('fail → retry → import failure reverts the book AND emits the normalized revertedBookStatus', async () => {
     const { bookId, replacement } = await failAndRetry('wanted');
-    const [book] = await db.select({ id: books.id, title: books.title, path: books.path }).from(books).where(eq(books.id, bookId)).limit(1);
 
-    await expect(handleImportFailure({
-      error: new Error('SABnzbd timed out'),
-      targetPath: undefined,
-      db,
-      downloadId: replacement.id,
-      book: book!,
-      bookStatusAtGrab: replacement.bookStatusAtGrab as BookStatus | null,
-      log: inject<FastifyBaseLogger>(log),
-    })).rejects.toThrow('SABnzbd timed out');
+    const settingsService = createMockSettingsService();
+    const importService = new ImportService(db, clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookService);
+    const importOrchestrator = new ImportOrchestrator(
+      importService, settingsService, inject<FastifyBaseLogger>(log),
+      undefined, undefined,
+      inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({ id: 1 }) }),
+      inject<EventBroadcasterService>(broadcaster),
+      undefined, bookService,
+    );
+
+    adapter.getDownload.mockResolvedValue(null);
+    broadcaster.emit.mockClear();
+
+    await expect(importOrchestrator.importDownload(replacement.id)).rejects.toThrow(/not found in client/);
 
     expect(await bookStatus(bookId)).toBe('wanted');
-    // `import_failed` carries `bookStatusAtGrab ?? REVERT_FALLBACK_STATUS`; a null column is the only
-    // way that degrades to 'imported', and AC2 forbids persisting one.
-    expect(replacement.bookStatusAtGrab).not.toBeNull();
-    expect(replacement.bookStatusAtGrab ?? REVERT_FALLBACK_STATUS).toBe('wanted');
+    // `old_status: 'importing'` separates the failure emission from the entry one, which carries
+    // `new_status: 'importing'`. `new_status` IS the revertedBookStatus argument.
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+      book_id: bookId,
+      old_status: 'importing',
+      new_status: 'wanted',
+    });
+    // A null column is the only input that degrades this event to REVERT_FALLBACK_STATUS, and AC2
+    // forbids the retry path from persisting one.
+    expect(replacement.bookStatusAtGrab).toBe('wanted');
   });
 
   it('fail → retry → quality-gate reject reverts to the normalized capture', async () => {
