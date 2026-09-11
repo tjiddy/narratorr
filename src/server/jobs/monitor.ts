@@ -1,14 +1,9 @@
-import { eq, and, or, ne } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '@db/schema.js';
+import { downloads } from '@db/schema.js';
 import { deriveDisplayStatus } from '@shared/download-status-registry.js';
-import {
-  transitionDownloadState,
-  clientPolledDownloadCondition,
-  inProgressDownloadCondition,
-  completedDisplayDownloadCondition,
-} from '../utils/download-state.js';
+import { transitionDownloadState, clientPolledDownloadCondition } from '../utils/download-state.js';
 import type { ClientStatus } from '@shared/schemas/activity.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import type { DownloadClientService } from '../services';
@@ -18,7 +13,7 @@ import type { BlacklistService } from '../services';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { DownloadStatus } from '@shared/schemas/activity.js';
 import { safeEmit } from '../utils/safe-emit.js';
-import { revertBookStatus } from '../utils/book-status.js';
+import { recoverBookStatus, failTerminally } from '../utils/download-failure-recovery.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
@@ -360,8 +355,7 @@ async function handleDownloadFailure(
   }
 
   if (!redownloadFailed) {
-    await db.update(downloads).set({ errorMessage: 'Redownload disabled' }).where(eq(downloads.id, downloadId));
-    await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
+    await failTerminally(db, { downloadId, bookId }, 'Redownload disabled', log, broadcaster);
     return 'redownload_disabled';
   }
 
@@ -378,16 +372,14 @@ async function handleDownloadFailure(
         return 'retried';
       }
       case 'exhausted':
-        await db.update(downloads).set({ errorMessage: 'Retries exhausted' }).where(eq(downloads.id, downloadId));
-        await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
+        await failTerminally(db, { downloadId, bookId }, 'Retries exhausted', log, broadcaster);
         return 'exhausted';
       case 'already_active':
         // Preserve the failed row and book status; the existing blocker owns the lifecycle.
         log.info({ downloadId, bookId }, 'Retry skipped — book already has a blocking download or import');
         return 'already_active';
       case 'no_candidates':
-        await db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, downloadId));
-        await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
+        await failTerminally(db, { downloadId, bookId }, 'No viable candidates', log, broadcaster);
         return 'no_candidates';
       case 'retry_error':
         // No automatic retry follows: `transitionDownloadState` already wrote clientStatus='failed',
@@ -395,56 +387,14 @@ async function handleDownloadFailure(
         // message tells the operator only they can re-drive it. The book still recovers like every
         // other terminal arm — leaving it at the grab-time status shows a false 'Downloading' and
         // hides it from the scheduled wanted-search (#2622 AC9).
-        await db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, downloadId));
-        await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
+        await failTerminally(db, { downloadId, bookId }, RETRY_ERROR_MESSAGE, log, broadcaster);
         return 'retry_error';
     }
   } catch (error: unknown) {
     log.error({ downloadId, bookId, error: serializeError(error) }, 'handleDownloadFailure unexpected error');
-    await db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, downloadId));
-    await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
+    await failTerminally(db, { downloadId, bookId }, RETRY_ERROR_MESSAGE, log, broadcaster);
     return 'retry_error';
   }
-}
-
-// Revert only when no other blocker exists, using the pre-grab snapshot rather than path inference.
-async function recoverBookStatus(
-  db: Db,
-  bookId: number,
-  failedDownloadId: number,
-  log: FastifyBaseLogger,
-  broadcaster?: EventBroadcasterService,
-): Promise<void> {
-  // Completed rows still block recovery while awaiting import.
-  const otherActive = await db
-    .select()
-    .from(downloads)
-    .where(and(
-      eq(downloads.bookId, bookId),
-      or(inProgressDownloadCondition(), completedDisplayDownloadCondition()),
-      ne(downloads.id, failedDownloadId),
-    ));
-
-  if (otherActive.length > 0) {
-    log.debug({ bookId, otherActiveCount: otherActive.length }, 'Skipping book status recovery — other active downloads exist');
-    return;
-  }
-
-  const [book] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
-  if (!book) return;
-
-  const [failedDownload] = await db
-    .select({ bookStatusAtGrab: downloads.bookStatusAtGrab })
-    .from(downloads)
-    .where(eq(downloads.id, failedDownloadId))
-    .limit(1);
-
-  const oldStatus = book.status;
-  const newStatus = await revertBookStatus(db, book, failedDownload?.bookStatusAtGrab ?? null);
-  if (oldStatus !== newStatus) {
-    safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: oldStatus, new_status: newStatus }, log);
-  }
-  log.info({ bookId, status: newStatus }, 'Book status recovered after download failure');
 }
 
 function mapDownloadStatus(
