@@ -1653,7 +1653,8 @@ describe('DownloadService', () => {
         });
 
         it("a null snapshot persists 'wanted', not the imported revert fallback (AC2)", async () => {
-          const ds = useRealOrchestrator('downloading');
+          // Seeded `imported` so the read arm would answer differently: this pins the supplied-null row.
+          const ds = useRealOrchestrator('imported');
           db.select.mockReturnValue(mockDbChain([{ download: failedAt(null), book: mockBook }]));
 
           await retryService.retry(1);

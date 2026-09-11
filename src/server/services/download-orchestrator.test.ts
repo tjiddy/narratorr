@@ -1052,6 +1052,9 @@ describe('DownloadOrchestrator — retry book-status normalization (#2622)', () 
 
   describe('T1 — caller-supplied arm is total over the AC5 table', () => {
     it.each(AC5_TABLE)('snapshot %s persists %s', async (snapshot, expected) => {
+      // `imported` is unreachable from the policy, so every row here would read differently if the
+      // supplied snapshot were dropped in favour of the fresh read — including the `null` row.
+      bookRows = [{ status: 'imported' }];
       await orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: snapshot });
       expect(downloadService.grab).toHaveBeenCalledWith({
         downloadUrl: 'magnet:?xt=urn:btih:abc',

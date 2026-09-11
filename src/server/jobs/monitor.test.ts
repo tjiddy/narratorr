@@ -2655,8 +2655,10 @@ describe('monitor — failed-row snapshot and retry_error recovery (#2622)', () 
     ] as Array<[BookStatus | null, BookStatus]>)('a failed row at %s produces a replacement at %s', async (captured, expected) => {
       const downloadService = inject<DownloadService>({ grab: vi.fn().mockResolvedValue({ id: 99 }) });
       const orchDb = createMockDb();
+      // `imported` is unreachable from the policy, so the read arm would answer differently for
+      // every row of this table — including the `null` capture.
       orchDb.select.mockImplementation((projection?: Record<string, unknown>) =>
-        projection && 'status' in projection ? mockDbChain([{ status: 'downloading' }]) : mockDbChain([]));
+        projection && 'status' in projection ? mockDbChain([{ status: 'imported' }]) : mockDbChain([]));
       retryDeps.retrySearchDeps.downloadOrchestrator = inject(
         new DownloadOrchestrator(downloadService, orchDb as never, inject<FastifyBaseLogger>(createMockLogger())),
       );

@@ -1908,7 +1908,8 @@ describe('retrySearch — failed-row snapshot plumbing (#2622)', () => {
   });
 
   it("resolves a null snapshot to 'wanted', never null and never REVERT_FALLBACK_STATUS (AC2)", async () => {
-    const { deps, downloadService } = withRealOrchestrator('downloading');
+    // Seeded `imported` so the read arm would answer differently: this pins the supplied-null row.
+    const { deps, downloadService } = withRealOrchestrator('imported');
 
     await expect(retrySearch(1, deps, { bookStatusAtGrab: null })).resolves.toMatchObject({ outcome: 'retried' });
 
