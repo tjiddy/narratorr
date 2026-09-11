@@ -10,6 +10,7 @@ import {
   completedDisplayDownloadCondition,
 } from '../utils/download-state.js';
 import type { ClientStatus } from '@shared/schemas/activity.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, RETRY_ERROR_MESSAGE, type RetrySearchDeps } from '../services/retry-search.js';
@@ -117,7 +118,7 @@ async function handleMissingItem(
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage, log });
 
   if (download.bookId && retryDeps) {
-    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary', broadcaster);
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, download.bookStatusAtGrab, retryDeps, log, 'download_failed', 'temporary', broadcaster);
     if (outcome === 'retried') {
       await db.delete(downloads).where(eq(downloads.id, download.id));
     }
@@ -255,7 +256,7 @@ async function handleFailureTransition(
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage: errorMessage ?? 'Download failed', log });
 
   if (download.bookId && retryDeps) {
-    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary', broadcaster);
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, download.bookStatusAtGrab, retryDeps, log, 'download_failed', 'temporary', broadcaster);
     if (outcome === 'retried') {
       await db.delete(downloads).where(eq(downloads.id, download.id));
     }
@@ -341,6 +342,9 @@ async function handleDownloadFailure(
   infoHash: string | null,
   guid: string | null,
   title: string,
+  // From the caller's in-hand poll row: the `retried` arm deletes that row once this returns, so the
+  // capture has to happen above the retry rather than by re-reading it (#2622 AC3/AC4).
+  bookStatusAtGrab: BookStatus | null,
   retryDeps: MonitorRetryDeps,
   log: FastifyBaseLogger,
   reason: 'bad_quality' | 'download_failed' | 'infrastructure_error' = 'bad_quality',
@@ -364,7 +368,7 @@ async function handleDownloadFailure(
   await blacklistRelease(retryDeps.blacklistService, { downloadId, infoHash, guid, title, bookId, reason, blacklistType }, log);
 
   try {
-    const result = await retrySearch(bookId, retryDeps.retrySearchDeps);
+    const result = await retrySearch(bookId, retryDeps.retrySearchDeps, { bookStatusAtGrab });
 
     switch (result.outcome) {
       case 'retried': {
@@ -387,14 +391,18 @@ async function handleDownloadFailure(
         return 'no_candidates';
       case 'retry_error':
         // No automatic retry follows: `transitionDownloadState` already wrote clientStatus='failed',
-        // which `clientPolledDownloadCondition()` excludes from every later poll, and the book keeps
-        // its grab-time status because this arm skips `recoverBookStatus`. Only the operator can.
+        // which `clientPolledDownloadCondition()` excludes from every later poll, and the persisted
+        // message tells the operator only they can re-drive it. The book still recovers like every
+        // other terminal arm — leaving it at the grab-time status shows a false 'Downloading' and
+        // hides it from the scheduled wanted-search (#2622 AC9).
         await db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, downloadId));
+        await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'retry_error';
     }
   } catch (error: unknown) {
     log.error({ downloadId, bookId, error: serializeError(error) }, 'handleDownloadFailure unexpected error');
     await db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, downloadId));
+    await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
     return 'retry_error';
   }
 }

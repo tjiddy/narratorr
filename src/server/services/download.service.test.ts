@@ -12,6 +12,8 @@ import * as statusRegistry from '@shared/download-status-registry.js';
 import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 import { _resetSearchRegistryForTesting } from './search-deadline.js';
 import { retrySearch } from './retry-search.js';
+import { DownloadOrchestrator } from './download-orchestrator.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 
 // #2477 AC11: `retry()` calls the real `retrySearch`, so `inFlightSearches` is live module state
 // here — a parked run left registered would gate a later case's retry as `already_active`.
@@ -51,6 +53,8 @@ const mockDownload = {
   addedAt: now,
   completedAt: null,
   guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
+  // Real rows always carry it; an omitted key would make the #2622 plumbing invisible here.
+  bookStatusAtGrab: null as BookStatus | null,
 };
 
 function createMockDownloadClientService(): DownloadClientService {
@@ -1593,6 +1597,122 @@ describe('DownloadService', () => {
 
           armed[0]!();
           await holder;
+        });
+      });
+
+      /**
+       * #2622. `retry()` already holds the failed row from `getById(id)`, so the pre-grab snapshot
+       * travels from there — the row is deleted only after `retrySearch` returns, and an absent row
+       * still throws NOT_FOUND rather than falling back to a fabricated status.
+       */
+      describe('failed-row snapshot plumbing (#2622)', () => {
+        const failedAt = (bookStatusAtGrab: BookStatus | null) => ({
+          ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const, bookStatusAtGrab,
+        });
+        const RELEASE = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+
+        /** Swap in a real orchestrator so the assertion lands on the value the insert receives. */
+        function useRealOrchestrator(bookStatus: BookStatus) {
+          const orchDb = createMockDb();
+          orchDb.select.mockImplementation((projection?: Record<string, unknown>) =>
+            projection && 'status' in projection ? mockDbChain([{ status: bookStatus }]) : mockDbChain([]));
+          const downloadService = inject<DownloadService>({ grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) });
+          mockRetryDeps.downloadOrchestrator = inject(
+            new DownloadOrchestrator(downloadService, orchDb as never, inject<FastifyBaseLogger>(createMockLogger())),
+          );
+          return downloadService;
+        }
+
+        const capturedByInsert = (ds: DownloadService): unknown =>
+          ((ds.grab as Mock).mock.calls[0]![0] as Record<string, unknown>)['bookStatusAtGrab'];
+
+        beforeEach(() => {
+          mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([RELEASE]));
+          db.delete.mockReturnValue(mockDbChain());
+          db.update.mockReturnValue(mockDbChain());
+        });
+
+        it('forwards the in-hand row\'s bookStatusAtGrab to the retry grab', async () => {
+          db.select.mockReturnValue(mockDbChain([{ download: failedAt('missing'), book: mockBook }]));
+
+          await expect(retryService.retry(1)).resolves.toMatchObject({ status: 'retried' });
+
+          expect(mockRetryDeps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
+            expect.objectContaining({ bookId: 1, skipDuplicateCheck: true }),
+            { bookStatusAtGrab: 'missing' },
+          );
+        });
+
+        it('an already-corrupt row does not copy its transient snapshot forward', async () => {
+          const ds = useRealOrchestrator('downloading');
+          db.select.mockReturnValue(mockDbChain([{ download: failedAt('downloading'), book: mockBook }]));
+
+          await expect(retryService.retry(1)).resolves.toMatchObject({ status: 'retried' });
+
+          expect(capturedByInsert(ds)).toBe('wanted');
+        });
+
+        it("a null snapshot persists 'wanted', not the imported revert fallback (AC2)", async () => {
+          const ds = useRealOrchestrator('downloading');
+          db.select.mockReturnValue(mockDbChain([{ download: failedAt(null), book: mockBook }]));
+
+          await retryService.retry(1);
+
+          expect(capturedByInsert(ds)).toBe('wanted');
+        });
+
+        it('a non-transient snapshot survives the round trip', async () => {
+          const ds = useRealOrchestrator('downloading');
+          db.select.mockReturnValue(mockDbChain([{ download: failedAt('missing'), book: mockBook }]));
+
+          await retryService.retry(1);
+
+          expect(capturedByInsert(ds)).toBe('missing');
+        });
+
+        it('deletes the old row only AFTER the retry grab has run (AC4)', async () => {
+          const trace: string[] = [];
+          let release!: () => void;
+          const gate = new Promise<void>((r) => { release = r; });
+          mockRetryDeps.downloadOrchestrator.grabForRetry.mockImplementation(async (_p: unknown, opts: unknown) => {
+            trace.push(`grab:${JSON.stringify(opts)}`);
+            await gate;
+            return { id: 99, title: 'New Download', bookId: 1, book: mockBook };
+          });
+          db.delete.mockImplementation(() => { trace.push('delete'); return mockDbChain(); });
+          db.select.mockReturnValue(mockDbChain([{ download: failedAt('failed'), book: mockBook }]));
+
+          const running = retryService.retry(1);
+          await vi.waitFor(() => expect(trace).toHaveLength(1));
+
+          expect(trace).toEqual(['grab:{"bookStatusAtGrab":"failed"}']);
+          release();
+          await expect(running).resolves.toMatchObject({ status: 'retried' });
+          expect(trace).toEqual(['grab:{"bookStatusAtGrab":"failed"}', 'delete']);
+        });
+
+        it.each([
+          ['NOT_FOUND', () => { db.select.mockReturnValue(mockDbChain([])); }],
+          ['INVALID_STATUS', () => { db.select.mockReturnValue(mockDbChain([{ download: { ...mockDownload, id: 1 }, book: mockBook }])); }],
+          ['NO_BOOK_LINKED', () => { db.select.mockReturnValue(mockDbChain([{ download: { ...failedAt('wanted'), bookId: null }, book: null }])); }],
+        ])('the %s guard still throws before any snapshot is taken (AC3)', async (code, seed) => {
+          seed();
+
+          await expect(retryService.retry(1)).rejects.toSatisfy(
+            (e: unknown) => e instanceof DownloadError && e.code === code,
+          );
+          expect(mockRetryDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+        });
+
+        it('the IMPORTED_BOOK_NO_RETRY guard still throws before any snapshot is taken (AC3)', async () => {
+          db.select
+            .mockReturnValueOnce(mockDbChain([{ download: failedAt('wanted'), book: mockBook }]))
+            .mockReturnValueOnce(mockDbChain([{ path: '/library/imported-book' }]));
+
+          await expect(retryService.retry(1)).rejects.toSatisfy(
+            (e: unknown) => e instanceof DownloadError && e.code === 'IMPORTED_BOOK_NO_RETRY',
+          );
+          expect(mockRetryDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
         });
       });
     });
