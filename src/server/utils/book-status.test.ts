@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { Mock } from 'vitest';
 import { eq, and } from 'drizzle-orm';
-import { revertBookStatus, guardedRevertBookStatus, transitionBookStatus, REVERT_FALLBACK_STATUS } from './book-status.js';
+import { revertBookStatus, guardedRevertBookStatus, transitionBookStatus, REVERT_FALLBACK_STATUS, normalizeRetryBookStatus } from './book-status.js';
 import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '@db/index.js';
 import { books } from '@db/schema.js';
+import { BOOK_STATUSES, type BookStatus } from '@shared/schemas/book.js';
 
 describe('transitionBookStatus', () => {
   it('sets only the provided fields (plus updatedAt) and targets the correct row', async () => {
@@ -127,5 +128,31 @@ describe('guardedRevertBookStatus (#1857)', () => {
     const result = await guardedRevertBookStatus(db as unknown as Db, { id: 3 }, null, 'downloading');
     expect(result).toEqual({ landed: true, status: REVERT_FALLBACK_STATUS });
     expect((chain as Record<string, Mock>).set).toHaveBeenCalledWith(expect.objectContaining({ status: 'imported' }));
+  });
+});
+
+describe('normalizeRetryBookStatus (#2622)', () => {
+  // The normative AC5 table. Every retry capture — supplied snapshot or fresh `books.status` read —
+  // is decided here, so this is the one place the policy is stated.
+  it.each([
+    [null, 'wanted'],
+    ['searching', 'wanted'],
+    ['downloading', 'wanted'],
+    ['importing', 'wanted'],
+    ['wanted', 'wanted'],
+    ['imported', 'imported'],
+    ['missing', 'missing'],
+    ['failed', 'failed'],
+  ] as Array<[BookStatus | null, BookStatus]>)('%s → %s', (input, expected) => {
+    expect(normalizeRetryBookStatus(input)).toBe(expected);
+  });
+
+  it('is total over BOOK_STATUSES — no status falls through to undefined', () => {
+    const results = BOOK_STATUSES.map((status) => normalizeRetryBookStatus(status));
+    expect(results).toEqual(['wanted', 'wanted', 'wanted', 'wanted', 'imported', 'missing', 'failed']);
+  });
+
+  it('resolves null AWAY from REVERT_FALLBACK_STATUS — the trap this function exists to avoid', () => {
+    expect(normalizeRetryBookStatus(null)).not.toBe(REVERT_FALLBACK_STATUS);
   });
 });

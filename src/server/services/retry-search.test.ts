@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { retrySearch, createRetrySearchDeps, type RetrySearchDeps } from './retry-search.js';
 import { RetryBudget } from './retry-budget.js';
-import { createMockLogger, inject, createMockSettingsService, mockSearchAllWithStatus, answeringSearchStatus, captureDeadlineTimers, searchStatus } from '../__tests__/helpers.js';
+import { DownloadOrchestrator } from './download-orchestrator.js';
+import { REVERT_FALLBACK_STATUS } from '../utils/book-status.js';
+import { createMockLogger, createMockDb, mockDbChain, inject, createMockSettingsService, mockSearchAllWithStatus, answeringSearchStatus, captureDeadlineTimers, searchStatus } from '../__tests__/helpers.js';
 import { _resetSearchRegistryForTesting } from './search-deadline.js';
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
-import type { DownloadOrchestrator } from './download-orchestrator.js';
-import type { DownloadWithBook } from './download.service.js';
+import type { DownloadService, DownloadWithBook } from './download.service.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -125,6 +127,7 @@ describe('retrySearch', () => {
         bookId: 1,
         skipDuplicateCheck: true,
       }),
+      {},
     );
   });
 
@@ -288,6 +291,7 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:def456' }),
+      {},
     );
     // #2336 AC7: a survivor means the set was never emptied.
     expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'All search results removed by the blacklist');
@@ -405,6 +409,7 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: `abb-details://${detailsUrl}`, guid: abbGuid }),
+      {},
     );
   });
 
@@ -523,6 +528,7 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
+      {},
     );
   });
 
@@ -744,6 +750,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
       expect.objectContaining({
         downloadUrl: 'https://nzb.example.com/download/xyz',
       }),
+      {},
     );
   });
 
@@ -791,6 +798,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
         guid: 'usenet-guid-123',
         downloadUrl: 'https://nzb.example.com/download/abc',
       }),
+      {},
     );
   });
 
@@ -818,6 +826,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ indexerId: 42 }),
+      {},
     );
   });
 
@@ -841,6 +850,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ isFreeleech: true }),
+      {},
     );
   });
 
@@ -880,6 +890,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
+      {},
     );
   });
 });
@@ -1045,6 +1056,7 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'http://nzb.test/valid' }),
+      {},
     );
     expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'http://nzb.test/multi' }),
@@ -1077,6 +1089,7 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:multi' }),
+      {},
     );
   });
 
@@ -1359,6 +1372,7 @@ describe('retrySearch — #2322 unsatisfied limit', () => {
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledTimes(1);
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Prowlarr Release' }),
+      {},
     );
     expect(eventsOfType(deps, 'grab_blocked_unsatisfied')).toHaveLength(0);
   });
@@ -1415,6 +1429,7 @@ describe('retrySearch — #2322 unsatisfied limit', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ title: FLOOR_FAILING }),
+      {},
     );
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
@@ -1850,5 +1865,136 @@ describe('retrySearch — deadline and single-flight (#2477)', () => {
       await expect(retrySearch(1, deps)).resolves.toMatchObject({ outcome: 'retried' });
       expect(armed).toHaveLength(1);
     });
+  });
+});
+
+/**
+ * #2622. The plumbing seam: the failed row's captured status travels caller → `retrySearch` →
+ * `grabForRetry`, and whatever it carries is normalized before it is persisted. The normalization
+ * cases drive a REAL `DownloadOrchestrator` so they observe the value that actually reaches the
+ * `downloads` insert, not the argument handed to a double.
+ */
+describe('retrySearch — failed-row snapshot plumbing (#2622)', () => {
+  /** Real orchestrator over a mock db: only the pre-grab existence read projects `{ status }`. */
+  function withRealOrchestrator(bookStatus: BookStatus) {
+    const db = createMockDb();
+    db.select.mockImplementation((projection?: Record<string, unknown>) =>
+      projection && 'status' in projection ? mockDbChain([{ status: bookStatus }]) : mockDbChain([]));
+    const downloadService = inject<DownloadService>({ grab: vi.fn().mockResolvedValue(mockDownload) });
+    const orchestrator = new DownloadOrchestrator(downloadService, db as never, inject<FastifyBaseLogger>(createMockLogger()));
+    return { deps: createDeps({ downloadOrchestrator: orchestrator }), downloadService };
+  }
+
+  const capturedByInsert = (downloadService: DownloadService): unknown =>
+    ((downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>)['bookStatusAtGrab'];
+
+  it('forwards a caller-supplied snapshot verbatim to grabForRetry', async () => {
+    const deps = createDeps();
+
+    await expect(retrySearch(1, deps, { bookStatusAtGrab: 'missing' })).resolves.toMatchObject({ outcome: 'retried' });
+
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:def456', bookId: 1, skipDuplicateCheck: true }),
+      { bookStatusAtGrab: 'missing' },
+    );
+  });
+
+  it("normalizes a transient supplied snapshot end to end — 'downloading' persists as 'wanted'", async () => {
+    const { deps, downloadService } = withRealOrchestrator('imported');
+
+    await expect(retrySearch(1, deps, { bookStatusAtGrab: 'downloading' })).resolves.toMatchObject({ outcome: 'retried' });
+
+    expect(capturedByInsert(downloadService)).toBe('wanted');
+  });
+
+  it("resolves a null snapshot to 'wanted', never null and never REVERT_FALLBACK_STATUS (AC2)", async () => {
+    const { deps, downloadService } = withRealOrchestrator('downloading');
+
+    await expect(retrySearch(1, deps, { bookStatusAtGrab: null })).resolves.toMatchObject({ outcome: 'retried' });
+
+    const captured = capturedByInsert(downloadService);
+    expect(captured).toBe('wanted');
+    expect(captured).not.toBe(REVERT_FALLBACK_STATUS);
+  });
+
+  it('preserves a non-transient supplied snapshot end to end', async () => {
+    const { deps, downloadService } = withRealOrchestrator('downloading');
+
+    await retrySearch(1, deps, { bookStatusAtGrab: 'missing' });
+
+    expect(capturedByInsert(downloadService)).toBe('missing');
+  });
+
+  it('an omitted snapshot selects the read arm — grabForRetry gets no snapshot', async () => {
+    const deps = createDeps();
+
+    await retrySearch(1, deps);
+
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(expect.anything(), {});
+  });
+
+  it("the read arm normalizes too — books.status 'downloading' persists as 'wanted'", async () => {
+    const { deps, downloadService } = withRealOrchestrator('downloading');
+
+    await retrySearch(1, deps);
+
+    expect(capturedByInsert(downloadService)).toBe('wanted');
+  });
+
+  it('non-retried outcomes return the same shapes whether or not a snapshot is supplied', async () => {
+    const makeDeps = () => createDeps({
+      indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: mockSearchAllWithStatus([]) }),
+    });
+
+    await expect(retrySearch(1, makeDeps())).resolves.toEqual({ outcome: 'no_candidates' });
+    await expect(retrySearch(1, makeDeps(), { bookStatusAtGrab: 'downloading' })).resolves.toEqual({ outcome: 'no_candidates' });
+
+    const exhausted = createDeps();
+    const exhaustedWith = createDeps();
+    for (const d of [exhausted, exhaustedWith]) {
+      for (let i = 0; i < 3; i++) d.retryBudget.consumeAttempt(1);
+    }
+    await expect(retrySearch(1, exhausted)).resolves.toEqual({ outcome: 'exhausted' });
+    await expect(retrySearch(1, exhaustedWith, { bookStatusAtGrab: 'wanted' })).resolves.toEqual({ outcome: 'exhausted' });
+
+    const blocked = createDeps({
+      downloadOrchestrator: inject<DownloadOrchestrator>({
+        grabForRetry: vi.fn(), hasGrabBlocker: vi.fn().mockResolvedValue(true),
+      }),
+    });
+    await expect(retrySearch(1, blocked, { bookStatusAtGrab: 'downloading' })).resolves.toEqual({ outcome: 'already_active' });
+
+    const throwing = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: vi.fn().mockRejectedValue(new Error('Indexer down')) }),
+    });
+    await expect(retrySearch(1, throwing, { bookStatusAtGrab: 'downloading' })).resolves.toMatchObject({ outcome: 'retry_error' });
+  });
+
+  it('a snapshot argument neither consumes nor refunds a retry attempt', async () => {
+    const deps = createDeps();
+    const blocked = createDeps({
+      downloadOrchestrator: inject<DownloadOrchestrator>({
+        grabForRetry: vi.fn(), hasGrabBlocker: vi.fn().mockResolvedValue(true),
+      }),
+    });
+
+    await retrySearch(1, deps, { bookStatusAtGrab: 'downloading' });
+    await retrySearch(1, blocked, { bookStatusAtGrab: 'downloading' });
+
+    // consumeAttempt returns the post-increment count, so it reads the spend without a new accessor:
+    // one attempt for the completed ladder, none for the early blocker check.
+    expect(deps.retryBudget.consumeAttempt(1)).toBe(2);
+    expect(blocked.retryBudget.consumeAttempt(1)).toBe(1);
+  });
+
+  it('the imported-book guard still short-circuits before any grab, snapshot or not', async () => {
+    const deps = createDeps({
+      bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue({ ...mockBook, path: '/library/book' }) }),
+    });
+
+    await expect(retrySearch(1, deps, { bookStatusAtGrab: 'downloading' })).resolves.toEqual({ outcome: 'no_candidates' });
+
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    expect(deps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
   });
 });
