@@ -48,6 +48,21 @@ export async function transitionBookStatus(
 // Legacy null snapshots revert to imported; never infer lifecycle from path.
 export const REVERT_FALLBACK_STATUS: BookStatus = 'imported';
 
+// A retry grab reads the book while the failed download still owns it, so these are never operator
+// intent — persisting one makes every later revert restore it (#2622).
+const TRANSIENT_RETRY_STATUSES = new Set<BookStatus>(['searching', 'downloading', 'importing', 'wanted']);
+
+/**
+ * The single retry capture policy (#2622 AC5), applied to both the caller-supplied snapshot and the
+ * `books.status` read so the two arms cannot drift. `null` resolves HERE rather than downstream:
+ * `revertBookStatus` would answer `REVERT_FALLBACK_STATUS` ('imported'), which strands the book
+ * harder than the transient capture this exists to prevent.
+ */
+export function normalizeRetryBookStatus(candidate: BookStatus | null): BookStatus {
+  if (candidate === null) return 'wanted';
+  return TRANSIENT_RETRY_STATUSES.has(candidate) ? 'wanted' : candidate;
+}
+
 // Restore the captured lifecycle snapshot and return it for a matching SSE.
 export async function revertBookStatus(
   db: DbOrTx,

@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadWithBook } from './download.service.js';
-import type { DownloadOrchestrator } from './download-orchestrator.js';
+import type { DownloadOrchestrator, RetryGrabOpts } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -120,6 +120,7 @@ async function runBoundedRetryLadder(
   book: BookWithAuthor,
   signal: AbortSignal,
   deps: RetrySearchDeps,
+  opts: RetryGrabOpts,
 ): Promise<RetryOutcome> {
   const { indexerSearchService, indexerService, downloadOrchestrator, blacklistService, settingsService, retryBudget, eventHistory, log } = deps;
   const bookId = book.id;
@@ -168,6 +169,7 @@ async function runBoundedRetryLadder(
     // the normal duplicate guard, that in-lock check is what prevents sequential duplicates.
     const grabResult = await downloadOrchestrator.grabForRetry(
       buildGrabPayload(best, book.id, { skipDuplicateCheck: true }),
+      opts,
     );
     if (grabResult === 'already_active') {
       log.info({ bookId, attempt }, 'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)');
@@ -183,10 +185,17 @@ async function runBoundedRetryLadder(
   }
 }
 
-/** Shared search→filter→rank→grab retry for monitor failures, manual retry, and mark-failed. */
+/**
+ * Shared search→filter→rank→grab retry for monitor failures, manual retry, and mark-failed.
+ *
+ * `opts.bookStatusAtGrab` is the failed row's captured pre-grab status, forwarded by the callers
+ * that hold that row (#2622). Omitting it is not "persist null" — it hands the decision to the
+ * `books.status` read, which the same policy normalizes.
+ */
 export async function retrySearch(
   bookId: number,
   deps: RetrySearchDeps,
+  opts: RetryGrabOpts = {},
 ): Promise<RetryOutcome> {
   const { downloadOrchestrator, bookService, retryBudget, log } = deps;
 
@@ -215,7 +224,7 @@ export async function retrySearch(
   // collision — so a collision costs no attempt.
   const outcome = await withSearchDeadline(
     { budgetMs: SEARCH_DEADLINE_MS, bookId, log },
-    (signal) => runBoundedRetryLadder(book, signal, deps),
+    (signal) => runBoundedRetryLadder(book, signal, deps, opts),
   ).catch((error: unknown) => {
     // Only the deadline can reach here — the ladder body converts every other failure — but the
     // mapping is total so no future rejection can widen `retrySearch`'s contract.

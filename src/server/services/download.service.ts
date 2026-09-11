@@ -381,7 +381,8 @@ export class DownloadService {
     // A manual retry starts a new budget cycle.
     retrySearchDeps.retryBudget.reset(download.bookId);
 
-    const result = await retrySearch(download.bookId, retrySearchDeps);
+    // Captured from the row already in hand: the `retried` arm deletes it below (#2622 AC4).
+    const result = await retrySearch(download.bookId, retrySearchDeps, { bookStatusAtGrab: download.bookStatusAtGrab });
 
     switch (result.outcome) {
       case 'retried': {
