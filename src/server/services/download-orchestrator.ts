@@ -10,7 +10,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadProtocol } from '@core/index.js';
 import { eq } from 'drizzle-orm';
 import { books } from '@db/schema.js';
-import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
+import { normalizeRetryBookStatus, revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import {
   emitGrabStarted, emitBookStatusChangeOnGrab, emitDownloadProgress,
   emitDownloadStatusChange, emitBookStatusChange, notifyGrab,
@@ -45,6 +45,21 @@ export interface GrabInnerOpts {
   bookStatusAtGrabOverride?: BookStatus | null | undefined;
   /** Internal replace retries status writes and emits SSE only after success (F16/F22/F29). */
   bestEffortBookStatus?: boolean | undefined;
+  /**
+   * Present iff this is a retry grab (#2622). Deliberately NOT folded into
+   * `bookStatusAtGrabOverride`: replace must keep supplying a verbatim `null`, which the retry
+   * policy resolves to `'wanted'`. `snapshot: undefined` selects the `books.status` read arm.
+   */
+  retryCapture?: { snapshot: BookStatus | null | undefined } | undefined;
+}
+
+export interface RetryGrabOpts {
+  /**
+   * The failed download's captured pre-grab status, when the caller already holds that row. Omitted
+   * by callers with no pre-grab intent to offer (mark-failed, the rejection helper) — which selects
+   * the read arm, not a persisted `null`.
+   */
+  bookStatusAtGrab?: BookStatus | null | undefined;
 }
 
 export class DownloadOrchestrator {
@@ -74,12 +89,14 @@ export class DownloadOrchestrator {
   }
 
   /** Retry rechecks blockers under one book mutex, then uses the unlocked primitive to avoid self-deadlock. */
-  async grabForRetry(params: GrabParams): Promise<DownloadWithBook | 'already_active'> {
+  async grabForRetry(params: GrabParams, opts: RetryGrabOpts = {}): Promise<DownloadWithBook | 'already_active'> {
+    // Both return paths carry it, or the orphan branch would silently bypass the policy (#2622 AC7).
+    const inner: GrabInnerOpts = { retryCapture: { snapshot: opts.bookStatusAtGrab } };
     const bookId = params.bookId;
-    if (!bookId) return this.grabWithinAdmissionLock(params, {});
+    if (!bookId) return this.grabWithinAdmissionLock(params, inner);
     return withBookAdmissionLock(bookId, async () => {
       if (await this.hasGrabBlocker(bookId)) return 'already_active';
-      return this.grabWithinAdmissionLock(params, {});
+      return this.grabWithinAdmissionLock(params, inner);
     });
   }
 
@@ -152,8 +169,10 @@ export class DownloadOrchestrator {
    * means no torrent reaches the client and no compensation path is entered.
    */
   private async resolveBookStatusAtGrab(params: GrabParams, opts: GrabInnerOpts): Promise<BookStatus | null> {
-    const override = opts.bookStatusAtGrabOverride;
-    if (params.bookId === undefined) return override ?? null;
+    const { bookStatusAtGrabOverride: override, retryCapture: retry } = opts;
+    if (params.bookId === undefined) {
+      return retry ? normalizeRetryBookStatus(retry.snapshot ?? null) : override ?? null;
+    }
 
     // `books.id` is a DB-assigned autoincrement rowid and no insert site supplies one, so a
     // non-positive id cannot resolve — refuse it without spending a query.
@@ -166,7 +185,11 @@ export class DownloadOrchestrator {
       .limit(1);
     if (row.length === 0) throw bookNotFoundError();
 
-    return override !== undefined ? override : ((row[0]?.status ?? null) as BookStatus | null);
+    const read = (row[0]?.status ?? null) as BookStatus | null;
+    // One policy, both retry arms (#2622 AC5): a supplied snapshot is the candidate when the caller
+    // had one, otherwise the fresh read is. Replace still selects its override on `!== undefined`.
+    if (retry) return normalizeRetryBookStatus(retry.snapshot !== undefined ? retry.snapshot : read);
+    return override !== undefined ? override : read;
   }
 
   /**

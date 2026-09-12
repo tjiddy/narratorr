@@ -7,6 +7,7 @@ import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 vi.mock('../utils/download-side-effects.js', () => ({
@@ -21,7 +22,10 @@ vi.mock('../utils/download-side-effects.js', () => ({
   recordDownloadFailedEvent: vi.fn(),
 }));
 
-vi.mock('../utils/book-status.js', () => ({
+// `normalizeRetryBookStatus` stays REAL: the #2622 cases assert the policy as the orchestrator
+// actually applies it, so a stubbed identity would make every normalization case vacuous.
+vi.mock('../utils/book-status.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/book-status.js')>()),
   revertBookStatus: vi.fn().mockResolvedValue('wanted'),
   transitionBookStatus: vi.fn().mockResolvedValue(true),
   guardedRevertBookStatus: vi.fn().mockResolvedValue({ landed: true, status: 'wanted' }),
@@ -977,6 +981,217 @@ describe('DownloadOrchestrator — the stale-bookId guard (#2604 AC1/AC2)', () =
       (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(downstream);
 
       await expect(orchestrator.grab(params(2))).rejects.toBe(downstream);
+    });
+  });
+});
+
+/**
+ * #2622. A retry grab reads `books.status` while the failed download still owns the book, so the
+ * pre-grab capture is a transient value the operator never chose. Every later revert restores it,
+ * which is how books park at `downloading` with nothing live behind them. One policy decides both
+ * candidate sources; replace and the plain grab paths are deliberately outside it.
+ */
+describe('DownloadOrchestrator — retry book-status normalization (#2622)', () => {
+  let downloadService: DownloadService;
+  let log: FastifyBaseLogger;
+  let orchestrator: DownloadOrchestrator;
+  let bookRows: Array<{ status: string }>;
+  let booksReads: unknown[];
+  let mockDb: ReturnType<typeof createMockDb>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (transitionBookStatus as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    downloadService = createMockDownloadService({
+      grab: vi.fn().mockResolvedValue(mockDownload),
+      getById: vi.fn().mockResolvedValue(mockDownload),
+    });
+    log = { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as FastifyBaseLogger;
+    bookRows = [{ status: 'downloading' }];
+    booksReads = [];
+    mockDb = createMockDb();
+    // Only the pre-grab existence read projects `{ status }`; every other select is the empty blocker set.
+    mockDb.select.mockImplementation((projection?: Record<string, unknown>) => {
+      if (projection && 'status' in projection) {
+        booksReads.push(projection);
+        return mockDbChain(bookRows);
+      }
+      return mockDbChain([]);
+    });
+    orchestrator = new DownloadOrchestrator(downloadService, mockDb as never, log, undefined, undefined, broadcasterDouble());
+  });
+
+  function broadcasterDouble(): EventBroadcasterService {
+    return inject<EventBroadcasterService>({ emit: vi.fn() });
+  }
+
+  const RETRY_PARAMS = { downloadUrl: 'magnet:?xt=urn:btih:abc', title: 'Retry Release', bookId: 42 };
+
+  /** The value that actually reached the `downloads` insert — the only thing AC5 is about. */
+  const persisted = (): unknown =>
+    ((downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>)['bookStatusAtGrab'];
+
+  /** Reaches the shared primitive the replace workflow drives through `ReplaceCtx.grab`. */
+  const grabWithOpts = (p: unknown, opts: unknown) =>
+    (orchestrator as unknown as {
+      grabWithinAdmissionLock: (p: unknown, o: unknown) => Promise<unknown>;
+    }).grabWithinAdmissionLock(p, opts);
+
+  // AC5's normative table, both arms. The pair is what pins the two code paths together: if the
+  // supplied arm ever bypasses the policy, T1 reds while T2 stays green.
+  const AC5_TABLE: Array<[BookStatus | null, BookStatus]> = [
+    [null, 'wanted'],
+    ['searching', 'wanted'],
+    ['downloading', 'wanted'],
+    ['importing', 'wanted'],
+    ['wanted', 'wanted'],
+    ['imported', 'imported'],
+    ['missing', 'missing'],
+    ['failed', 'failed'],
+  ];
+
+  describe('T1 — caller-supplied arm is total over the AC5 table', () => {
+    it.each(AC5_TABLE)('snapshot %s persists %s', async (snapshot, expected) => {
+      // `imported` is unreachable from the policy, so every row here would read differently if the
+      // supplied snapshot were dropped in favour of the fresh read — including the `null` row.
+      bookRows = [{ status: 'imported' }];
+      await orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: snapshot });
+      expect(downloadService.grab).toHaveBeenCalledWith({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Retry Release',
+        bookId: 42,
+        bookStatusAtGrab: expected,
+      });
+    });
+  });
+
+  describe('T2 — read arm is total over BOOK_STATUSES, with the same outcomes', () => {
+    it.each(AC5_TABLE.filter(([input]) => input !== null) as Array<[BookStatus, BookStatus]>)(
+      'books.status %s persists %s',
+      async (status, expected) => {
+        bookRows = [{ status }];
+        await orchestrator.grabForRetry(RETRY_PARAMS);
+        expect(downloadService.grab).toHaveBeenCalledWith({
+          downloadUrl: 'magnet:?xt=urn:btih:abc',
+          title: 'Retry Release',
+          bookId: 42,
+          bookStatusAtGrab: expected,
+        });
+      },
+    );
+  });
+
+  describe('T3 — Mechanism C: an already-corrupt snapshot does not copy forward', () => {
+    it("supplied 'downloading' (the shape of the 60 existing prod rows) persists 'wanted'", async () => {
+      bookRows = [{ status: 'imported' }];
+      await orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: 'downloading' });
+      expect(persisted()).toBe('wanted');
+    });
+  });
+
+  describe('T4 — searching normalizes on both arms', () => {
+    it('supplied', async () => {
+      await orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: 'searching' });
+      expect(persisted()).toBe('wanted');
+    });
+
+    it('read', async () => {
+      bookRows = [{ status: 'searching' }];
+      await orchestrator.grabForRetry(RETRY_PARAMS);
+      expect(persisted()).toBe('wanted');
+    });
+  });
+
+  describe('T5 — non-transient values pass through unchanged (the policy is not a blanket overwrite)', () => {
+    it.each(['imported', 'missing', 'failed'] as const)('supplied %s survives', async (status) => {
+      await orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: status });
+      expect(persisted()).toBe(status);
+    });
+
+    it.each(['imported', 'missing', 'failed'] as const)('read %s survives', async (status) => {
+      bookRows = [{ status }];
+      await orchestrator.grabForRetry(RETRY_PARAMS);
+      expect(persisted()).toBe(status);
+    });
+  });
+
+  describe('T6/T7 — the replace override is untouched (AC6)', () => {
+    it('a verbatim null override still persists null (#1857 F6)', async () => {
+      bookRows = [{ status: 'imported' }];
+      await grabWithOpts(RETRY_PARAMS, { bookStatusAtGrabOverride: null });
+      expect(persisted()).toBeNull();
+    });
+
+    it('a transient override is NOT normalized — replace owns its own question', async () => {
+      bookRows = [{ status: 'imported' }];
+      await grabWithOpts(RETRY_PARAMS, { bookStatusAtGrabOverride: 'downloading' });
+      expect(persisted()).toBe('downloading');
+    });
+  });
+
+  describe('T8 — normalization does not leak into grab()/grabInternal()', () => {
+    it.each(['grab', 'grabInternal'] as const)('%s still captures a genuine downloading', async (method) => {
+      bookRows = [{ status: 'downloading' }];
+      await orchestrator[method](RETRY_PARAMS);
+      expect(persisted()).toBe('downloading');
+    });
+  });
+
+  describe('T9 — the no-book early return carries the retry options (AC7)', () => {
+    it('an orphan retry grab still normalizes rather than persisting the bare default', async () => {
+      await orchestrator.grabForRetry(
+        { downloadUrl: 'magnet:?xt=urn:btih:abc', title: 'Orphan' },
+        { bookStatusAtGrab: 'downloading' },
+      );
+      expect(booksReads).toHaveLength(0);
+      expect(persisted()).toBe('wanted');
+    });
+  });
+
+  describe('T10/T11 — the #2604 stale-book refusal is unchanged (AC13)', () => {
+    it('a supplied snapshot does not skip the existence check', async () => {
+      bookRows = [];
+      await expect(orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: 'wanted' })).rejects.toMatchObject({
+        code: 'BOOK_NOT_FOUND',
+        message: BOOK_NOT_FOUND_MESSAGE,
+      });
+      expect(downloadService.grab).not.toHaveBeenCalled();
+      expect(booksReads).toHaveLength(1);
+    });
+
+    it.each([0, -1])('bookId %i is refused without spending a query', async (bookId) => {
+      await expect(
+        orchestrator.grabForRetry({ ...RETRY_PARAMS, bookId }, { bookStatusAtGrab: 'downloading' }),
+      ).rejects.toMatchObject({ code: 'BOOK_NOT_FOUND' });
+      expect(downloadService.grab).not.toHaveBeenCalled();
+      expect(booksReads).toHaveLength(0);
+    });
+  });
+
+  describe('T12 — the grab SSE reports the persisted value (AC12)', () => {
+    it('supplied arm: oldStatus is the normalized capture, not the raw snapshot', async () => {
+      await orchestrator.grabForRetry(RETRY_PARAMS, { bookStatusAtGrab: 'downloading' });
+      expect(emitBookStatusChangeOnGrab).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, oldStatus: 'wanted' }),
+      );
+      expect(persisted()).toBe('wanted');
+    });
+
+    it('read arm: oldStatus is the normalized capture, not the raw books.status', async () => {
+      bookRows = [{ status: 'importing' }];
+      await orchestrator.grabForRetry(RETRY_PARAMS);
+      expect(emitBookStatusChangeOnGrab).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, oldStatus: 'wanted' }),
+      );
+      expect(persisted()).toBe('wanted');
+    });
+
+    it('read arm: a non-transient capture reaches the SSE verbatim', async () => {
+      bookRows = [{ status: 'missing' }];
+      await orchestrator.grabForRetry(RETRY_PARAMS);
+      expect(emitBookStatusChangeOnGrab).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, oldStatus: 'missing' }),
+      );
     });
   });
 });
