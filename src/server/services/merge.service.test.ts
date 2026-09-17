@@ -14,7 +14,7 @@ import { RetagError, type TaggingService, type RetagResult } from './tagging.ser
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { books } from '@db/schema.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
@@ -554,6 +554,35 @@ describe('MergeService', () => {
 
         expect(unlink).toHaveBeenCalled();
         expect(notifyRefresh).toHaveBeenCalledWith('merge', [expect.objectContaining({ bookId: 42 })]);
+      });
+
+      it('commits the merge and warns when the post-commit staging cleanup fails (unraid .fuse_hidden leftovers)', async () => {
+        setupHappyPath();
+        // First rm is runStaging's reset; every later attempt is the post-commit cleanup, still blocked.
+        (rm as Mock).mockResolvedValueOnce(undefined).mockRejectedValue(
+          Object.assign(new Error(`ENOTEMPTY: directory not empty, rmdir '${STAGING_DIR}'`), { code: 'ENOTEMPTY' }),
+        );
+        (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
+        const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+        const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
+        const { service, log } = createService({ eventBroadcaster, eventHistory });
+
+        await service.enqueueMerge(42);
+        // removeTree backs off 600 ms across its retries before giving up, well past settle()'s 50 ms.
+        const emitted = () => (eventBroadcaster.emit as Mock).mock.calls as unknown[][];
+        await vi.waitFor(() => expect(emitted().some((c) => c[0] === 'merge_complete')).toBe(true), { timeout: 3000 });
+
+        expect(emitted().find((c) => c[0] === 'merge_failed')).toBeUndefined();
+        const complete = emitted().find((c) => c[0] === 'merge_complete')!;
+        expect((complete[1] as { message: string }).message)
+          .toBe(`Merged 2 files into The Way of Kings.m4b (staging dir left behind: ${basename(STAGING_DIR)})`);
+        expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42, eventType: 'merged' }));
+        // The throw used to skip every post-commit step; enrichment is the one this harness can observe.
+        expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalledTimes(1);
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 42, stagingDir: STAGING_DIR, error: expect.objectContaining({ code: 'ENOTEMPTY' }) }),
+          'Merge committed, but the staging dir could not be removed — leaving it in place',
+        );
       });
 
       it("commitMerge's staging cleanup runs strictly AFTER the refresh enqueue, so a cleanup failure cannot suppress the now-required rescan", async () => {
