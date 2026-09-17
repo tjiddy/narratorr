@@ -4,7 +4,7 @@ import { formatBytes, type Download } from '@/lib/api';
 import { formatRelativeDate } from '@/lib/format';
 import { AlertCircleIcon, LoadingSpinner, ChevronDownIcon } from '@/components/icons';
 import { ProtocolBadge } from '@/components/ProtocolBadge';
-import { statusConfig } from './helpers.js';
+import { statusConfig, describeDownloadBook } from './helpers.js';
 import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
 import { QualityComparisonPanel } from './QualityComparisonPanel.js';
@@ -179,16 +179,25 @@ function DownloadStatusDetails({
 }
 
 function DownloadTitle({ download, compact }: { download: Download; compact: boolean }) {
+  const book = download.book ?? null;
+  const headline = book?.title ?? download.title;
+  const byline = book ? describeDownloadBook(book) : null;
   return (
-    <h3 className={`font-display font-semibold line-clamp-2 ${compact ? 'text-base' : 'text-lg'}`}>
-      {download.bookId != null ? (
-        <Link to={`/books/${download.bookId}`} className="hover:text-primary transition-colors">
-          {download.title}
-        </Link>
-      ) : (
-        download.title
-      )}
-    </h3>
+    <>
+      <h3
+        className={`font-display font-semibold line-clamp-2 ${compact ? 'text-base' : 'text-lg'}`}
+        title={book ? download.title : undefined}
+      >
+        {download.bookId != null ? (
+          <Link to={`/books/${download.bookId}`} className="hover:text-primary transition-colors">
+            {headline}
+          </Link>
+        ) : (
+          headline
+        )}
+      </h3>
+      {byline && <p className="text-sm text-muted-foreground truncate">{byline}</p>}
+    </>
   );
 }
 

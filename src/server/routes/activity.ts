@@ -18,6 +18,13 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
+/** The activity cards headline the library book, so every joined book row carries its author names. */
+async function withBookAuthors<T extends { book?: { id: number } }>(rows: T[], downloadService: DownloadService) {
+  const bookIds = rows.flatMap((dl) => (dl.book ? [dl.book.id] : []));
+  const names = bookIds.length > 0 ? await downloadService.getBookAuthorNames(bookIds) : new Map<number, string[]>();
+  return rows.map((dl) => (dl.book ? { ...dl, book: { ...dl.book, authors: names.get(dl.book.id) ?? [] } } : dl));
+}
+
 export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, bookImportService: BookImportService, nudgeImportWorker: () => void) {
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
@@ -36,7 +43,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         ? await qualityGateService.getQualityGateDataBatch(pendingIds)
         : new Map<number, null>();
 
-      const augmented = result.data.map((dl) => {
+      const augmented = (await withBookAuthors(result.data, downloadService)).map((dl) => {
         const qualityGate = gateMap.get(dl.id);
         return qualityGate ? { ...dl, qualityGate } : dl;
       });
@@ -46,7 +53,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   );
 
   app.get('/api/activity/active', async () => {
-    return downloadService.getActive();
+    return withBookAuthors(await downloadService.getActive(), downloadService);
   });
 
   app.get('/api/activity/counts', async (request) => {
@@ -65,7 +72,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         return reply.status(404).send({ error: 'Download not found' });
       }
 
-      return download;
+      return (await withBookAuthors([download], downloadService))[0];
     },
   );
 

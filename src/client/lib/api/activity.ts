@@ -2,13 +2,25 @@ import { fetchApi } from './client.js';
 import type { DownloadProtocol } from '@core/indexers/types.js';
 import type { ClientStatus, DownloadStatus, PipelineStage, QualityGateReason } from '@shared/schemas.js';
 
+/** The library book a download is attached to, as the server joins it; authors are in credit order. */
+export interface DownloadBook {
+  id: number;
+  title: string;
+  subtitle?: string | null;
+  seriesName?: string | null;
+  seriesPosition?: number | null;
+  authors?: string[];
+}
+
 export interface Download {
   id: number;
   bookId?: number | null;
   indexerId?: number | null;
   indexerName: string | null;
   downloadClientId?: number;
+  /** The release name as grabbed; the card headlines `book.title` when a book is attached. */
   title: string;
+  book?: DownloadBook | null;
   protocol: DownloadProtocol;
   infoHash?: string;
   downloadUrl?: string;

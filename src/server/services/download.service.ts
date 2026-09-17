@@ -1,7 +1,7 @@
-import { eq, desc, and, or, count, sql } from 'drizzle-orm';
+import { eq, desc, and, or, count, sql, inArray } from 'drizzle-orm';
 import { type Db, type DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, indexers } from '@db/schema.js';
+import { downloads, books, indexers, bookAuthors, authors } from '@db/schema.js';
 import type { DownloadProtocol } from '@core/index.js';
 import type { DownloadArtifact, StagedHandoff } from '@core/download-clients/types.js';
 import { isTerminalState, deriveDisplayStatus } from '@shared/download-status-registry.js';
@@ -29,6 +29,7 @@ import { stripClearedFields } from './book-row-public.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { applyPagination } from '../utils/db-helpers.js';
+import { chunkArray } from '../utils/batch.js';
 import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 
 export interface DownloadWithBook extends DownloadRow {
@@ -154,6 +155,28 @@ export class DownloadService {
       ...(r.book && { book: stripClearedFields(r.book) }),
       indexerName: r.indexer?.name ?? null,
     }));
+  }
+
+  /** Same bound-parameter ceiling the blacklist lookups chunk at. */
+  private static readonly AUTHOR_LOOKUP_CHUNK_SIZE = 480;
+
+  /** Author names in credit order, keyed by book id; no query for an empty input. */
+  async getBookAuthorNames(bookIds: number[]): Promise<Map<number, string[]>> {
+    const names = new Map<number, string[]>();
+    for (const chunk of chunkArray([...new Set(bookIds)], DownloadService.AUTHOR_LOOKUP_CHUNK_SIZE)) {
+      const rows = await this.db
+        .select({ bookId: bookAuthors.bookId, name: authors.name })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+        .where(inArray(bookAuthors.bookId, chunk))
+        .orderBy(bookAuthors.bookId, bookAuthors.position);
+      for (const row of rows) {
+        const list = names.get(row.bookId) ?? [];
+        list.push(row.name);
+        names.set(row.bookId, list);
+      }
+    }
+    return names;
   }
 
   async getCounts(): Promise<{ active: number; completed: number }> {

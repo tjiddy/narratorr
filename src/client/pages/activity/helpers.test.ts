@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { downloadStatusSchema } from '@shared/schemas.js';
 import { DOWNLOAD_STATUS_REGISTRY } from '@shared/download-status-registry.js';
-import { statusConfig } from './helpers.js';
+import { statusConfig, describeDownloadBook } from './helpers.js';
 
 describe('statusConfig (derived from registry)', () => {
   const allStatuses = downloadStatusSchema.options;
@@ -59,5 +59,29 @@ describe('statusConfig (derived from registry)', () => {
       expect(statusConfig[status]!.bgColor).toBe(DOWNLOAD_STATUS_REGISTRY[status].bgColor);
       expect(statusConfig[status]!.textColor).toBe(DOWNLOAD_STATUS_REGISTRY[status].textColor);
     }
+  });
+});
+
+describe('describeDownloadBook', () => {
+  it('joins the authors in credit order and appends the series with its position', () => {
+    expect(describeDownloadBook({ authors: ['R. A. Salvatore', 'Someone Else'], seriesName: "The Hunter's Blades", seriesPosition: 2 }))
+      .toBe("R. A. Salvatore, Someone Else · The Hunter's Blades #2");
+  });
+
+  it('keeps a fractional series position as written', () => {
+    expect(describeDownloadBook({ authors: ['Jodi Taylor'], seriesName: 'St Mary’s', seriesPosition: 4.5 })).toBe('Jodi Taylor · St Mary’s #4.5');
+  });
+
+  it('names the series alone when the book has no position in it', () => {
+    expect(describeDownloadBook({ authors: [], seriesName: 'Standalone Anthology', seriesPosition: null })).toBe('Standalone Anthology');
+  });
+
+  it('shows only the authors when there is no series', () => {
+    expect(describeDownloadBook({ authors: ['Stephen King'], seriesName: null, seriesPosition: null })).toBe('Stephen King');
+  });
+
+  it('returns null when neither authors nor series are known, so the card renders no byline', () => {
+    expect(describeDownloadBook({ authors: [], seriesName: null, seriesPosition: null })).toBeNull();
+    expect(describeDownloadBook({})).toBeNull();
   });
 });
