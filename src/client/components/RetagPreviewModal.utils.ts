@@ -51,15 +51,23 @@ export function canonicalRows(plan: RetagPlan): { field: RetagExcludableField; v
   return rows;
 }
 
-/** Mirrors apply: excluding every diff turns `will-tag` into `skip-populated` unless a cover is pending. */
+/**
+ * Mirrors apply: a will-tag file drops to a skip once nothing it still includes differs and no
+ * cover is pending — `skip-populated` when every row is excluded, `skip-unchanged` when the
+ * remaining rows already match the file.
+ */
 export function effectiveOutcome(
   file: RetagPlanFile,
   excludeSet: Set<RetagExcludableField>,
 ): RetagPlanFile['outcome'] {
   if (file.outcome !== 'will-tag') return file.outcome;
   const visibleDiff = visibleDiffOf(file, excludeSet);
-  if (visibleDiff.length > 0 || file.coverPending) return 'will-tag';
-  return 'skip-populated';
+  if (visibleDiff.some(d => d.changed) || file.coverPending) return 'will-tag';
+  return visibleDiff.length > 0 ? 'skip-unchanged' : 'skip-populated';
+}
+
+export function countChanges(file: RetagPlanFile, excludeSet: Set<RetagExcludableField>): number {
+  return visibleDiffOf(file, excludeSet).filter(d => d.changed).length;
 }
 
 export function visibleDiffOf(

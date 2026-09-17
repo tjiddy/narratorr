@@ -1569,7 +1569,7 @@ describe('books routes', () => {
         isSingleFile: true,
         canonical: { artist: 'A', albumArtist: 'A', album: 'B', title: 'B' },
         files: [
-          { file: 'book.mp3', outcome: 'will-tag', diff: [{ field: 'artist', current: null, next: 'A' }], coverPending: false },
+          { file: 'book.mp3', outcome: 'will-tag', diff: [{ field: 'artist', current: null, next: 'A', changed: true }], coverPending: false },
         ],
         warnings: [],
       });

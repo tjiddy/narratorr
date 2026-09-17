@@ -1,4 +1,5 @@
 import { parseFile } from 'music-metadata';
+import { readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import type { TagMode, RetagExcludableField } from '@shared/schemas.js';
 import type { TagMetadata } from './tagging.service.js';
@@ -8,11 +9,16 @@ export interface RetagPlanFileDiff {
   field: RetagExcludableField;
   current: string | null;
   next: string | null;
+  /** False when the file already carries `next`; overwrite still writes the row, the preview mutes it. */
+  changed: boolean;
 }
+
+export type RetagPlanOutcome = 'will-tag' | 'skip-populated' | 'skip-unchanged' | 'skip-unsupported';
 
 export interface RetagPlanFile {
   file: string;
-  outcome: 'will-tag' | 'skip-populated' | 'skip-unsupported';
+  /** `skip-unchanged` is overwrite's "nothing differs"; `skip-populated` is "nothing to write". */
+  outcome: RetagPlanOutcome;
   diff?: RetagPlanFileDiff[];
   /** Includes cover-only writes. */
   coverPending?: boolean;
@@ -212,13 +218,26 @@ function hasAnyField(tags: TagMetadata): boolean {
   return tags.track != null && tags.trackTotal != null;
 }
 
-export async function fileHasCoverArt(filePath: string): Promise<boolean> {
+async function readEmbeddedPictures(filePath: string): Promise<Uint8Array[]> {
   try {
     const metadata = await parseFile(filePath);
-    return (metadata.common.picture?.length ?? 0) > 0;
+    return (metadata.common.picture ?? []).map(picture => picture.data);
   } catch {
-    return false;
+    return [];
   }
+}
+
+/**
+ * Shared by apply and preview. Overwrite re-embeds unless the file already holds exactly this
+ * image: the writer replaces the whole picture set with one entry, so a second picture or a
+ * different byte sequence is a real change, while a byte-identical single picture is not.
+ */
+export async function isCoverPending(filePath: string, coverPath: string, mode: TagMode): Promise<boolean> {
+  const pictures = await readEmbeddedPictures(filePath);
+  if (mode === 'populate_missing') return pictures.length === 0;
+  if (pictures.length !== 1) return true;
+  const cover = await readFile(coverPath).catch(() => null);
+  return cover === null || !cover.equals(pictures[0]!);
 }
 
 // Shared by apply and preview so their canonical tag sets cannot drift.
@@ -324,34 +343,73 @@ export async function planFile(
   const fileName = basename(filePath);
   const existing = existingTags ?? await readExistingTags(filePath);
   const resolvedTags = resolveTags(desired, existing, mode);
-
-  const fileHasCover = coverPath !== undefined ? await fileHasCoverArt(filePath) : false;
-  const coverPending = coverPath !== undefined && (mode === 'overwrite' || !fileHasCover);
-
-  if (!resolvedTags && !coverPending) {
-    return { file: fileName, outcome: 'skip-populated' };
-  }
-
+  const coverPending = coverPath !== undefined && await isCoverPending(filePath, coverPath, mode);
   const diff = resolvedTags ? buildTagDiff(resolvedTags, existing) : [];
+
+  if (!diff.some(row => row.changed) && !coverPending) {
+    return { file: fileName, outcome: resolvedTags ? 'skip-unchanged' : 'skip-populated' };
+  }
   return { file: fileName, outcome: 'will-tag', diff, coverPending };
 }
 
+/** Apply's counterpart to the preview's muted rows: overwrite writes nothing when this is false. */
+export function hasTagChanges(resolved: TagMetadata, existing: Partial<TagMetadata>): boolean {
+  return buildTagDiff(resolved, existing).some(row => row.changed);
+}
+
+export const SKIP_REASON_ALREADY_POPULATED = 'All tags already populated';
+export const SKIP_REASON_ALREADY_CORRECT = 'Tags already correct';
+
+/**
+ * Apply's twin of planFile: what a write to `filePath` would actually change. Overwrite reads the
+ * file too, so one that already carries every value (and the cover) is left alone rather than
+ * rewritten, which is what the preview's muted rows promise; when anything differs the whole
+ * requested set is written.
+ */
+export async function planWrite(
+  filePath: string,
+  tags: TagMetadata,
+  mode: TagMode,
+  coverPath: string | undefined,
+  existingTags: Partial<TagMetadata> | undefined,
+): Promise<{ tags: TagMetadata | null; embedCover: boolean; skipReason: string }> {
+  const existing = existingTags ?? await readExistingTags(filePath);
+  const resolvedTags = resolveTags(tags, existing, mode);
+  const embedCover = coverPath !== undefined && await isCoverPending(filePath, coverPath, mode);
+  return {
+    tags: resolvedTags && hasTagChanges(resolvedTags, existing) ? resolvedTags : null,
+    embedCover,
+    skipReason: resolvedTags ? SKIP_REASON_ALREADY_CORRECT : SKIP_REASON_ALREADY_POPULATED,
+  };
+}
+
+// populate_missing rows are always changes (resolveTags keeps only absent fields); overwrite is
+// where `changed` carries information.
 function buildTagDiff(resolved: TagMetadata, existing: Partial<TagMetadata>): RetagPlanFileDiff[] {
   const diff: RetagPlanFileDiff[] = [];
   for (const field of TAG_DIFF_FIELDS) {
     const next = resolved[field];
     if (next === undefined) continue;
-    diff.push({ field, current: stringify(existing[field] ?? null), next: stringify(next) });
+    diff.push(diffRow(field, stringify(existing[field] ?? null), stringify(next)));
   }
   if (resolved.seriesPart != null) {
-    const currentPart = existing.seriesPart != null ? `${existing.seriesPart}` : null;
-    diff.push({ field: 'seriesPart', current: currentPart, next: `${resolved.seriesPart}` });
+    diff.push(diffRow('seriesPart', stringify(existing.seriesPart ?? null), `${resolved.seriesPart}`));
   }
   if (resolved.track != null && resolved.trackTotal != null) {
-    const currentTrack = existing.track != null ? `${existing.track}` : null;
-    diff.push({ field: 'track', current: currentTrack, next: `${resolved.track}/${resolved.trackTotal}` });
+    // Both sides carry the total, or an unchanged "3/12" would read as a change from "3".
+    const current = formatTrack(existing.track, existing.trackTotal);
+    diff.push(diffRow('track', current, `${resolved.track}/${resolved.trackTotal}`));
   }
   return diff;
+}
+
+function diffRow(field: RetagExcludableField, current: string | null, next: string | null): RetagPlanFileDiff {
+  return { field, current, next, changed: current !== next };
+}
+
+function formatTrack(track: number | undefined, total: number | undefined): string | null {
+  if (track == null) return null;
+  return total == null ? `${track}` : `${track}/${total}`;
 }
 
 function stringify(value: string | number | null | undefined): string | null {

@@ -181,11 +181,15 @@ export interface RetagPlanFileDiff {
   field: RetagExcludableField;
   current: string | null;
   next: string | null;
+  /** False when the file already carries `next`; the preview mutes such rows. */
+  changed: boolean;
 }
+
+export type RetagPlanOutcome = 'will-tag' | 'skip-populated' | 'skip-unchanged' | 'skip-unsupported';
 
 export interface RetagPlanFile {
   file: string;
-  outcome: 'will-tag' | 'skip-populated' | 'skip-unsupported';
+  outcome: RetagPlanOutcome;
   diff?: RetagPlanFileDiff[];
   coverPending?: boolean;
 }

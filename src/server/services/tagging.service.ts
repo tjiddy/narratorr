@@ -22,8 +22,9 @@ import { buildTagProjection } from '../utils/tag-projection.js';
 import { withBookAdmissionLock } from './book-admission.js';
 import {
   readExistingTags,
-  resolveTags,
-  fileHasCoverArt,
+  planWrite,
+  SKIP_REASON_ALREADY_CORRECT,
+  SKIP_REASON_ALREADY_POPULATED,
   buildCanonicalTags,
   buildTagsForFile,
   applyExcludeFields,
@@ -37,8 +38,12 @@ export type {
   RetagPlan,
   RetagPlanFile,
   RetagPlanFileDiff,
+  RetagPlanOutcome,
   RetagPlanCanonical,
 } from './retag-plan.js';
+
+/** Skips that are the expected outcome of a no-op pass, so they never surface as warnings. */
+const QUIET_SKIP_REASONS: ReadonlySet<string> = new Set([SKIP_REASON_ALREADY_POPULATED, SKIP_REASON_ALREADY_CORRECT]);
 
 export interface TagMetadata {
   artist?: string; // author
@@ -89,6 +94,7 @@ export async function tagFile(
   tags: TagMetadata,
   mode: TagMode,
   coverPath?: string,
+  existingTags?: Partial<TagMetadata>,
 ): Promise<TagFileResult> {
   const ext = extname(filePath).toLowerCase();
   const fileName = basename(filePath);
@@ -98,35 +104,34 @@ export async function tagFile(
     return { file: fileName, status: 'skipped', reason: `Unsupported format: ${ext}` };
   }
 
-  const existing = mode === 'populate_missing' ? await readExistingTags(filePath) : {};
-  const resolvedTags = resolveTags(tags, existing, mode);
-
-  const shouldEmbedCover = coverPath && (mode === 'overwrite' || !await fileHasCoverArt(filePath));
-
-  if (!resolvedTags && !shouldEmbedCover) {
-    return { file: fileName, status: 'skipped', reason: 'All tags already populated' };
-  }
-
-  const { request, warnings } = buildMutagenRequest({
-    filePath,
-    format,
-    tags: resolvedTags ?? {},
-    coverPath: shouldEmbedCover ? coverPath : undefined,
-  });
-
   // The write is in place — no second file is ever created, so #1852 AC9's hazard (a library scan
   // ingesting the born-hidden temp file before the atomic rename) cannot occur and the temp+rename
-  // it guarded is gone. The lock covers the save *and* the helper's read-back verification.
-  const result = await withPathWriteLock(filePath, () => writeTagsWithMutagen(mutagenPython, request));
+  // it guarded is gone. The lock covers the decision read, the save, and the read-back verification:
+  // a queued overwrite compares against this one's result, not the pre-write file, and nothing
+  // awaits before acquisition, so calls take the lock in call order (AC20).
+  return withPathWriteLock(filePath, async () => {
+    const write = await planWrite(filePath, tags, mode, coverPath, existingTags);
+    if (!write.tags && !write.embedCover) {
+      return { file: fileName, status: 'skipped', reason: write.skipReason };
+    }
 
-  const sizes = {
-    ...(result.sizeBefore !== undefined && { sizeBefore: result.sizeBefore }),
-    ...(result.sizeAfter !== undefined && { sizeAfter: result.sizeAfter }),
-  };
-  if (!result.ok) {
-    return { file: fileName, status: 'failed', ...(result.reason && { reason: result.reason }), ...sizes };
-  }
-  return { file: fileName, status: 'tagged', ...(warnings.length > 0 && { warnings }), ...sizes };
+    const { request, warnings } = buildMutagenRequest({
+      filePath,
+      format,
+      tags: write.tags ?? {},
+      coverPath: write.embedCover ? coverPath : undefined,
+    });
+    const result = await writeTagsWithMutagen(mutagenPython, request);
+
+    const sizes = {
+      ...(result.sizeBefore !== undefined && { sizeBefore: result.sizeBefore }),
+      ...(result.sizeAfter !== undefined && { sizeAfter: result.sizeAfter }),
+    };
+    if (!result.ok) {
+      return { file: fileName, status: 'failed', ...(result.reason && { reason: result.reason }), ...sizes };
+    }
+    return { file: fileName, status: 'tagged', ...(warnings.length > 0 && { warnings }), ...sizes };
+  });
 }
 
 /**
@@ -259,7 +264,7 @@ export class TaggingService {
       // Multi-file overwrite preserves an existing chapter title before falling back to basename.
       const existingTags = !isSingleFile && mode === 'overwrite'
         ? await readExistingTags(filePath)
-        : {};
+        : undefined;
 
       const fullTags = buildTagsForFile({
         canonicalTags,
@@ -268,26 +273,13 @@ export class TaggingService {
         index: i,
         total: audioFiles.length,
         mode,
-        existingTags,
+        existingTags: existingTags ?? {},
       });
 
       const tags = applyExcludeFields(fullTags, excludeFields);
 
-      const fileResult = await tagFile(filePath, mutagenPython, tags, mode, coverPath);
-      result[fileResult.status]++;
-
-      for (const warning of fileResult.warnings ?? []) {
-        this.log.warn({ file: fileResult.file, reason: warning }, 'Tag write warning');
-        result.warnings.push(`${fileResult.file}: ${warning}`);
-      }
-
-      if (fileResult.status === 'failed') {
-        this.log.warn({ file: fileResult.file, reason: fileResult.reason }, 'Tag write failed');
-        result.warnings.push(`${fileResult.file}: ${fileResult.reason}`);
-      } else if (fileResult.status === 'skipped' && fileResult.reason !== 'All tags already populated') {
-        this.log.warn({ file: fileResult.file, reason: fileResult.reason }, 'Tag write skipped');
-        result.warnings.push(`${fileResult.file}: ${fileResult.reason}`);
-      }
+      const fileResult = await tagFile(filePath, mutagenPython, tags, mode, coverPath, existingTags);
+      this.recordFileResult(result, fileResult);
     }
 
     this.log.info(
@@ -296,6 +288,23 @@ export class TaggingService {
     );
 
     return result;
+  }
+
+  /** Quiet skips count toward `skipped` but never become warnings: they are the expected no-op. */
+  private recordFileResult(result: RetagResult, fileResult: TagFileResult): void {
+    result[fileResult.status]++;
+    for (const warning of fileResult.warnings ?? []) {
+      this.log.warn({ file: fileResult.file, reason: warning }, 'Tag write warning');
+      result.warnings.push(`${fileResult.file}: ${warning}`);
+    }
+
+    if (fileResult.status === 'failed') {
+      this.log.warn({ file: fileResult.file, reason: fileResult.reason }, 'Tag write failed');
+      result.warnings.push(`${fileResult.file}: ${fileResult.reason}`);
+    } else if (fileResult.status === 'skipped' && !QUIET_SKIP_REASONS.has(fileResult.reason ?? '')) {
+      this.log.warn({ file: fileResult.file, reason: fileResult.reason }, 'Tag write skipped');
+      result.warnings.push(`${fileResult.file}: ${fileResult.reason}`);
+    }
   }
 
   /**

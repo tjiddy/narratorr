@@ -146,6 +146,7 @@ vi.mock('node:fs/promises', () => ({
   rename: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
   stat: vi.fn().mockResolvedValue({ size: 1000 }),
+  readFile: vi.fn().mockResolvedValue(Buffer.from('cover-bytes')),
 }));
 
 vi.mock('music-metadata', () => ({
@@ -172,7 +173,7 @@ vi.mock('@db/schema.js', () => ({
   narrators: { id: 'narrators.id', name: 'narrators.name' },
 }));
 
-import { rename, unlink, stat } from 'node:fs/promises';
+import { rename, unlink, stat, readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
 import { parseFile } from 'music-metadata';
@@ -180,6 +181,10 @@ import { parseFile } from 'music-metadata';
 beforeEach(() => {
   _bareReaddirCalls = 0;
   _bareReaddirRejectOrdinal = null;
+  // Overwrite reads the file before deciding to write, so a parseFile value left by an earlier
+  // test (they set it permanently, not Once) would turn an expected write into a skip.
+  (parseFile as Mock).mockResolvedValue({ common: {}, format: {} });
+  (readFile as Mock).mockResolvedValue(Buffer.from('cover-bytes'));
 });
 
 
@@ -718,7 +723,7 @@ describe('tagFile', () => {
     expect(mutagenRequest(0).cover).toEqual({ path: '/books/cover.jpg', mime: 'image/jpeg' });
   });
 
-  it('in overwrite mode, always embeds cover even when file has art', async () => {
+  it('in overwrite mode, re-embeds the cover when the embedded art differs from the cover file', async () => {
     (parseFile as Mock).mockResolvedValue({
       common: { picture: [{ data: Buffer.from('img') }] },
       format: {},
@@ -734,6 +739,91 @@ describe('tagFile', () => {
 
     expect(result.status).toBe('tagged');
     expect(mutagenRequest(0).cover).toEqual({ path: '/books/cover.jpg', mime: 'image/jpeg' });
+  });
+
+  it('in overwrite mode, skips a file whose tags already match, without spawning the tag writer', async () => {
+    (parseFile as Mock).mockResolvedValue({ common: { artist: 'Author', album: 'Book' }, format: {} });
+
+    const result = await tagFile('/books/file.mp3', '/usr/bin/python3', { artist: 'Author', album: 'Book' }, 'overwrite');
+
+    expect(result).toEqual({ file: 'file.mp3', status: 'skipped', reason: 'Tags already correct' });
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it('in overwrite mode, one differing field rewrites the whole requested set', async () => {
+    (parseFile as Mock).mockResolvedValue({ common: { artist: 'Author', album: 'Old Book' }, format: {} });
+
+    const result = await tagFile('/books/file.mp3', '/usr/bin/python3', { artist: 'Author', album: 'Book' }, 'overwrite');
+
+    expect(result.status).toBe('tagged');
+    expect(writtenTags(0)).toEqual({ artist: 'Author', album: 'Book' });
+  });
+
+  it('in overwrite mode, an unchanged track pair (n/total) is not a change', async () => {
+    (parseFile as Mock).mockResolvedValue({ common: { artist: 'Author', track: { no: 2, of: 5 } }, format: {} });
+
+    const result = await tagFile('/books/ch02.mp3', '/usr/bin/python3', { artist: 'Author', track: 2, trackTotal: 5 }, 'overwrite');
+
+    expect(result.status).toBe('skipped');
+    expect(result.reason).toBe('Tags already correct');
+  });
+
+  it('in overwrite mode, matching tags with a differing cover is a cover-only write', async () => {
+    (parseFile as Mock).mockResolvedValue({
+      common: { artist: 'Author', picture: [{ data: Buffer.from('old-art') }] },
+      format: {},
+    });
+
+    const result = await tagFile('/books/file.mp3', '/usr/bin/python3', { artist: 'Author' }, 'overwrite', '/books/cover.jpg');
+
+    expect(result.status).toBe('tagged');
+    expect(mutagenRequest(0).ops).toEqual([]);
+    expect(mutagenRequest(0).cover).toEqual({ path: '/books/cover.jpg', mime: 'image/jpeg' });
+  });
+
+  it('in overwrite mode, skips the cover when the file already holds exactly that image', async () => {
+    (parseFile as Mock).mockResolvedValue({
+      common: { artist: 'Author', picture: [{ data: Buffer.from('cover-bytes') }] },
+      format: {},
+    });
+
+    const result = await tagFile('/books/file.mp3', '/usr/bin/python3', { artist: 'Author' }, 'overwrite', '/books/cover.jpg');
+
+    expect(result).toEqual({ file: 'file.mp3', status: 'skipped', reason: 'Tags already correct' });
+    expect(readFile).toHaveBeenCalledWith('/books/cover.jpg');
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it('in overwrite mode, a second embedded picture still counts as a cover change', async () => {
+    (parseFile as Mock).mockResolvedValue({
+      common: { artist: 'Author', picture: [{ data: Buffer.from('cover-bytes') }, { data: Buffer.from('back-cover') }] },
+      format: {},
+    });
+
+    const result = await tagFile('/books/file.m4b', '/usr/bin/python3', { artist: 'Author' }, 'overwrite', '/books/cover.jpg');
+
+    expect(result.status).toBe('tagged');
+    expect(mutagenRequest(0).cover).toEqual({ path: '/books/cover.jpg', mime: 'image/jpeg' });
+  });
+
+  it('in populate_missing mode, an embedded picture suppresses the cover whatever its bytes', async () => {
+    (parseFile as Mock).mockResolvedValue({
+      common: { picture: [{ data: Buffer.from('old-art') }] },
+      format: {},
+    });
+
+    const result = await tagFile('/books/file.mp3', '/usr/bin/python3', { artist: 'Author' }, 'populate_missing', '/books/cover.jpg');
+
+    expect(result.status).toBe('tagged');
+    expect(mutagenRequest(0).cover).toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('uses caller-supplied existing tags instead of re-reading the file', async () => {
+    const result = await tagFile('/books/file.mp3', '/usr/bin/python3', { artist: 'Author' }, 'overwrite', undefined, { artist: 'Author' });
+
+    expect(result).toEqual({ file: 'file.mp3', status: 'skipped', reason: 'Tags already correct' });
+    expect(parseFile).not.toHaveBeenCalled();
   });
 
   // F1: the operator-visible consequence — a retained old cover must not be reported as `tagged`.
@@ -1131,6 +1221,24 @@ describe('tagFile', () => {
         expect.objectContaining({ file: 'Book.flac' }),
         'Tag write skipped',
       );
+    });
+
+    it('counts a file skipped as already correct without logging or reporting a warning', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'Author', albumartist: 'Author', album: 'Test', title: 'Test' },
+        format: {},
+      });
+      const log = createMockLog();
+      const service = new TaggingService(createMockDb() as never, createMockSettingsService(taggingDefaults) as never, log as never, mockBookService as never);
+
+      const result = await service.tagBook(1, '/books/test', {
+        title: 'Test', authorName: 'Author',
+      }, '/usr/bin/python3', 'overwrite', false);
+
+      expect(result).toMatchObject({ tagged: 0, skipped: 1, failed: 0, warnings: [] });
+      expect(log.warn).not.toHaveBeenCalled();
+      expect(execFile).not.toHaveBeenCalled();
     });
 
     it('adds warning when cover embedding enabled but no cover file found', async () => {
@@ -1544,9 +1652,9 @@ describe('tagFile', () => {
       const file = plan.files[0]!;
       expect(file.outcome).toBe('will-tag');
       const artistDiff = file.diff?.find(d => d.field === 'artist');
-      expect(artistDiff).toEqual({ field: 'artist', current: 'Old Artist', next: 'New Artist' });
+      expect(artistDiff).toEqual({ field: 'artist', current: 'Old Artist', next: 'New Artist', changed: true });
       const albumDiff = file.diff?.find(d => d.field === 'album');
-      expect(albumDiff).toEqual({ field: 'album', current: 'Old Album', next: 'New Title' });
+      expect(albumDiff).toEqual({ field: 'album', current: 'Old Album', next: 'New Title', changed: true });
     });
 
     it('populate_missing mode: file with album="" reports will-tag with album current=null', async () => {
@@ -1567,7 +1675,7 @@ describe('tagFile', () => {
       expect(file.outcome).toBe('will-tag');
       expect(file.diff?.find(d => d.field === 'artist')).toBeUndefined();
       const albumDiff = file.diff?.find(d => d.field === 'album');
-      expect(albumDiff).toEqual({ field: 'album', current: null, next: 'New Title' });
+      expect(albumDiff).toEqual({ field: 'album', current: null, next: 'New Title', changed: true });
     });
 
     it('populate_missing mode: file with all fields populated reports skip-populated', async () => {
@@ -1590,6 +1698,79 @@ describe('tagFile', () => {
 
       const plan = await service.planRetag(1);
       expect(plan.files[0]!.outcome).toBe('skip-populated');
+    });
+
+    it('overwrite mode: a file already carrying every value reports skip-unchanged with no diff', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'A', albumartist: 'A', album: 'B', title: 'B' },
+        format: {},
+      });
+      setupBook({ title: 'B', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+
+      expect(plan.files).toEqual([{ file: 'book.mp3', outcome: 'skip-unchanged' }]);
+    });
+
+    it('overwrite mode: rows flag changed per field, and one changed field keeps the file will-tag', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'A', albumartist: 'A', album: 'Old', title: 'B' },
+        format: {},
+      });
+      setupBook({ title: 'B', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const file = plan.files[0]!;
+
+      expect(file.outcome).toBe('will-tag');
+      expect(file.diff).toEqual([
+        { field: 'artist', current: 'A', next: 'A', changed: false },
+        { field: 'albumArtist', current: 'A', next: 'A', changed: false },
+        { field: 'album', current: 'Old', next: 'B', changed: true },
+        { field: 'title', current: 'B', next: 'B', changed: false },
+      ]);
+    });
+
+    it('overwrite + embedCover: a byte-identical embedded cover is not pending, so a matching file is skip-unchanged', async () => {
+      _readdirFiles = ['book.mp3', 'cover.jpg'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'A', albumartist: 'A', album: 'B', title: 'B', picture: [{ data: Buffer.from('cover-bytes') }] },
+        format: {},
+      });
+      setupBook({ title: 'B', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService({ processing: {}, tagging: { enabled: true, mode: 'overwrite', embedCover: true } });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+
+      expect(plan.hasCoverFile).toBe(true);
+      expect(plan.files).toEqual([{ file: 'book.mp3', outcome: 'skip-unchanged' }]);
+      expect(readFile).toHaveBeenCalledWith(expect.stringContaining('cover.jpg'));
+    });
+
+    it('overwrite + embedCover: a differing embedded cover keeps a matching file will-tag with only the cover pending', async () => {
+      _readdirFiles = ['book.mp3', 'cover.jpg'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'A', albumartist: 'A', album: 'B', title: 'B', picture: [{ data: Buffer.from('old-art') }] },
+        format: {},
+      });
+      setupBook({ title: 'B', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService({ processing: {}, tagging: { enabled: true, mode: 'overwrite', embedCover: true } });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const file = plan.files[0]!;
+
+      expect(file.outcome).toBe('will-tag');
+      expect(file.coverPending).toBe(true);
+      expect(file.diff?.length).toBeGreaterThan(0);
+      expect(file.diff?.every(row => !row.changed)).toBe(true);
     });
 
     it('unsupported formats appear in files[] with outcome skip-unsupported', async () => {
@@ -1764,8 +1945,8 @@ describe('tagFile', () => {
         const plan = await service.planRetag(1);
         const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
         expect(titleRows).toEqual([
-          { field: 'title', current: 'Chapter One', next: 'Chapter One' },
-          { field: 'title', current: 'Chapter Two', next: 'Chapter Two' },
+          { field: 'title', current: 'Chapter One', next: 'Chapter One', changed: false },
+          { field: 'title', current: 'Chapter Two', next: 'Chapter Two', changed: false },
         ]);
         const albumRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'album'));
         expect(albumRows.map(r => r.next)).toEqual(['Multi Book', 'Multi Book']);
@@ -1780,8 +1961,8 @@ describe('tagFile', () => {
         const plan = await service.planRetag(1);
         const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
         expect(titleRows).toEqual([
-          { field: 'title', current: null, next: '001 - The Boy Who Lived' },
-          { field: 'title', current: null, next: '002 - The Vanishing Glass' },
+          { field: 'title', current: null, next: '001 - The Boy Who Lived', changed: true },
+          { field: 'title', current: null, next: '002 - The Vanishing Glass', changed: true },
         ]);
         expect(titleRows.some(r => r.next === "Sorcerer's Stone")).toBe(false);
       });
@@ -1815,8 +1996,8 @@ describe('tagFile', () => {
         const plan = await service.planRetag(1);
         const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
         expect(titleRows).toEqual([
-          { field: 'title', current: null, next: '001 - First' },
-          { field: 'title', current: null, next: '002 - Second' },
+          { field: 'title', current: null, next: '001 - First', changed: true },
+          { field: 'title', current: null, next: '002 - Second', changed: true },
         ]);
       });
 
@@ -1829,7 +2010,7 @@ describe('tagFile', () => {
         const plan = await service.planRetag(1);
         expect(plan.canonical.title).toBe('Solo Book');
         const titleRow = plan.files[0]!.diff?.find(d => d.field === 'title');
-        expect(titleRow).toEqual({ field: 'title', current: null, next: 'Solo Book' });
+        expect(titleRow).toEqual({ field: 'title', current: null, next: 'Solo Book', changed: true });
       });
     });
 
@@ -2107,6 +2288,24 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
     expect(applyTitleByFile.get('ch03.mp3')).toBe('Existing 3');
   });
 
+  it('a file whose tags already match is skip-unchanged in the plan and untouched by apply (overwrite)', async () => {
+    _readdirFiles = ['book.mp3'];
+    (parseFile as Mock).mockResolvedValue({
+      common: { artist: 'A', albumartist: 'A', album: 'Test', title: 'Test' },
+      format: {},
+    });
+    const settings = createMockSettingsService({ processing: {}, tagging: { enabled: true, mode: 'overwrite' } });
+    const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+    const plan = await service.planRetag(1);
+    expect(plan.files).toEqual([{ file: 'book.mp3', outcome: 'skip-unchanged' }]);
+
+    const applyResult = await service.retagBook(1);
+
+    expect(applyResult).toMatchObject({ tagged: 0, skipped: 1, failed: 0, warnings: [] });
+    expect(writtenPaths()).toEqual([]);
+  });
+
   it('preview will-tag set matches apply tagged set (embedCover on with cover file)', async () => {
     _readdirFiles = ['ch01.mp3', 'cover.jpg'];
     const settings = createMockSettingsService({
@@ -2284,8 +2483,8 @@ describe('tag-write serialization (#2210 AC20/D7)', () => {
 
     const first = tagFile('/books/file.m4b', '/usr/bin/python3', { album: 'first' }, 'overwrite');
     const second = tagFile('/books/file.m4b', '/usr/bin/python3', { album: 'second' }, 'overwrite');
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(started).toEqual(['first']));
+    await new Promise(resolve => setImmediate(resolve));
 
     // The second helper must not have started while the first was still verifying.
     expect(started).toEqual(['first']);
