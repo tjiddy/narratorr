@@ -101,8 +101,8 @@ importers:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       undici:
-        specifier: ^8.9.0
-        version: 8.9.0
+        specifier: ^8.10.2
+        version: 8.10.2
       unzipper:
         specifier: ^0.12.5
         version: 0.12.5
@@ -3106,8 +3106,8 @@ packages:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.9.0:
-    resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
+  undici@8.10.2:
+    resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
     engines: {node: '>=22.19.0'}
 
   universalify@2.0.1:
@@ -5121,7 +5121,7 @@ snapshots:
       saxes: 6.0.0
       symbol-tree: 3.2.4
       tough-cookie: 6.0.2
-      undici: 8.9.0
+      undici: 8.10.2
       w3c-xmlserializer: 5.0.0
       webidl-conversions: 8.0.1
       whatwg-mimetype: 5.0.0
@@ -5957,7 +5957,7 @@ snapshots:
 
   undici@7.29.0: {}
 
-  undici@8.9.0: {}
+  undici@8.10.2: {}
 
   universalify@2.0.1: {}
 
